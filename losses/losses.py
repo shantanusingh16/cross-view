@@ -73,15 +73,14 @@ class compute_losses(nn.Module):
         losses["transform_loss"] = self.compute_transform_losses(
             features,
             retransform_features)
-        losses["loss"] = losses["topview_loss"] + 0.001 * losses["transform_loss"] \
-                         + 1 * losses["transform_topview_loss"]
+        losses["loss"] = losses["topview_loss"] + 0.001 * losses["transform_loss"] + 1 * losses["transform_topview_loss"]
 
         return losses
 
     def compute_topview_loss(self, outputs, true_top_view, weight):
         generated_top_view = outputs
-        true_top_view = torch.squeeze(true_top_view.long())
-        loss = nn.CrossEntropyLoss(weight=torch.Tensor([1., weight]).cuda())
+        true_top_view = torch.squeeze(true_top_view.long(), dim=1)
+        loss = nn.CrossEntropyLoss(weight=torch.Tensor([1., weight, weight]).cuda())
         output = loss(generated_top_view, true_top_view)
         return output.mean()
 

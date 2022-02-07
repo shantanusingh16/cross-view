@@ -121,9 +121,10 @@ class Decoder(nn.Module):
         Processes input image features into output occupancy maps/layouts
     """
 
-    def __init__(self, num_ch_enc, num_class=2, type=''):
+    def __init__(self, num_ch_enc, num_class=2, occ_map_size=256, type=''):
         super(Decoder, self).__init__()
         self.num_output_channels = num_class
+        self.occ_map_size = occ_map_size
         self.num_ch_enc = num_ch_enc
         self.num_ch_dec = np.array([16, 32, 64, 128, 256])
         # self.num_ch_dec = np.array([64, 128, 256])
@@ -149,6 +150,7 @@ class Decoder(nn.Module):
         self.convs["topview"] = Conv3x3(
             self.num_ch_dec[0], self.num_output_channels)
         self.dropout = nn.Dropout3d(0.2)
+        self.rescale_output = lambda x: F.interpolate(x, (self.occ_map_size, self.occ_map_size), mode='bilinear')
         self.decoder = nn.ModuleList(list(self.convs.values()))
 
     def forward(self, x, is_training=True):
@@ -177,10 +179,9 @@ class Decoder(nn.Module):
             x = self.convs[("upconv", i, 1)](x)
             x = self.convs[("norm", i, 1)](x)
 
-        if is_training:
-            x = self.convs["topview"](x)
-        else:
-            softmax = nn.Softmax2d()
-            x = softmax(self.convs["topview"](x))
+        x = self.convs["topview"](x)
+        x = self.rescale_output(x)
+        if not is_training:
+            x = nn.Softmax2d()(x)
 
         return x

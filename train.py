@@ -6,6 +6,7 @@ from pathlib import Path
 
 import crossView
 
+import cv2
 import numpy as np
 import copy
 
@@ -30,12 +31,14 @@ from opt import get_args
 import tqdm
 
 from losses import compute_losses
-from utils import mean_IU, mean_precision
+from utils import mean_IU, mean_precision, normalize_image, invnormalize_imagenet
 
 
 def readlines(filename):
     """Read all the lines in a text file and return as a list
     """
+    if os.path.islink(filename):
+        filename = os.readlink(filename)
     with open(filename, 'r') as f:
         lines = f.read().splitlines()
     return lines
@@ -80,9 +83,9 @@ class Trainer:
         self.models["CrossViewTransformer"] = crossView.CrossViewTransformer(128)
 
         self.models["decoder"] = crossView.Decoder(
-            self.models["encoder"].resnet_encoder.num_ch_enc, self.opt.num_class)
+            self.models["encoder"].resnet_encoder.num_ch_enc, self.opt.num_class, self.opt.occ_map_size)
         self.models["transform_decoder"] = crossView.Decoder(
-            self.models["encoder"].resnet_encoder.num_ch_enc, self.opt.num_class, "transform_decoder")
+            self.models["encoder"].resnet_encoder.num_ch_enc, self.opt.num_class, self.opt.occ_map_size, "transform_decoder")
 
         for key in self.models.keys():
             self.models[key].to(self.device)
@@ -106,8 +109,7 @@ class Trainer:
         self.scheduler = MultiStepLR(self.model_optimizer, milestones=self.opt.lr_steps, gamma=0.1)
         # self.scheduler = CosineAnnealingLR(self.model_optimizer, T_max=15)  # iou 35.55
 
-        self.patch = (1, self.opt.occ_map_size // 2 **
-                      4, self.opt.occ_map_size // 2 ** 4)
+        self.patch = (1, self.opt.occ_map_size // 2**4, self.opt.occ_map_size // 2**4)
 
         self.valid = Variable(
             torch.Tensor(
@@ -123,10 +125,13 @@ class Trainer:
             requires_grad=False).float().cuda()
 
         # Data Loaders
-        dataset_dict = {"3Dobject": crossView.KITTIObject,
-                        "odometry": crossView.KITTIOdometry,
-                        "argo": crossView.Argoverse,
-                        "raw": crossView.KITTIRAW}
+        dataset_dict = {
+            "3Dobject": crossView.KITTIObject,
+            "odometry": crossView.KITTIOdometry,
+            "argo": crossView.Argoverse,
+            "raw": crossView.KITTIRAW,
+            "gibson": crossView.GibsonDataset
+        }
 
         self.dataset = dataset_dict[self.opt.split]
         fpath = os.path.join(
@@ -182,7 +187,8 @@ class Trainer:
             self.log.write(output + '\n')
             self.log.flush()
             for loss_name in loss:
-                self.writer.add_scalar(loss_name, loss[loss_name], global_step=self.epoch)
+                self.writer.add_scalar(loss_name + '/train', loss[loss_name], global_step=self.epoch)
+                
             if self.epoch % self.opt.log_frequency == 0:
                 self.validation(self.log)
                 if self.opt.model_split_save:
@@ -238,25 +244,66 @@ class Trainer:
         return loss
 
     def validation(self, log):
-        iou, mAP = np.array([0., 0.]), np.array([0., 0.])
-        trans_iou, trans_mAP = np.array([0., 0.]), np.array([0., 0.])
+        iou, mAP = np.array([0.] * self.opt.num_class), np.array([0.] * self.opt.num_class)
+        # trans_iou, trans_mAP = np.array([0.] * self.opt.num_class), np.array([0.] * self.opt.num_class)
+        loss = {
+            "loss": 0.0,
+            "topview_loss": 0.0,
+            "transform_loss": 0.0,
+            "transform_topview_loss": 0.0,
+            "loss_discr": 0.0
+        }
         for batch_idx, inputs in tqdm.tqdm(enumerate(self.val_loader)):
             with torch.no_grad():
-                outputs = self.process_batch(inputs, True)
+                outputs, losses = self.process_batch(inputs, False)
+
+            for loss_name in losses:
+                loss[loss_name] += losses[loss_name].item()
+
             pred = np.squeeze(
                 torch.argmax(
                     outputs["topview"].detach(),
                     1).cpu().numpy())
             true = np.squeeze(
                 inputs[self.opt.type + "_gt"].detach().cpu().numpy())
-            iou += mean_IU(pred, true)
-            mAP += mean_precision(pred, true)
+            iou += mean_IU(pred, true, self.opt.num_class)
+            mAP += mean_precision(pred, true, self.opt.num_class)
+
+            if batch_idx >= 4:
+                continue
+            
+            # COLOR data
+            color = invnormalize_imagenet(inputs["color"][0].detach().cpu())
+            color = cv2.resize(color.numpy().transpose((1,2,0)), dsize=(128, 128)).transpose((2, 0, 1))
+            self.writer.add_image(f"color_gt/{batch_idx}", color, self.epoch)
+
+            # BEV data
+            self.writer.add_image(f"bev_gt/{batch_idx}",
+                normalize_image(np.expand_dims(true, axis=0), (0, 2)), self.epoch)
+
+            # BEV data
+            self.writer.add_image(f"bev_pred/{batch_idx}",
+                normalize_image(np.expand_dims(pred, axis=0), (0, 2)), self.epoch)
+        
+
+        for loss_name in loss:
+            loss[loss_name] /= len(self.train_loader)
+            self.writer.add_scalar(loss_name + '/val', loss[loss_name], global_step=self.epoch)
+
         iou /= len(self.val_loader)
         mAP /= len(self.val_loader)
-        output = ("Epoch: %d | Validation: mIOU: %.4f mAP: %.4f" % (self.epoch, iou[1], mAP[1]))
-        print(output)
-        log.write(output + '\n')
-        log.flush()
+
+        mAP_cls =  dict(unknown=mAP[0], occupied=mAP[1], free=mAP[2])
+        mIOU_cls = dict(unknown=iou[0], occupied=iou[1], free=iou[2])
+        
+        self.writer.add_scalars("mAP_cls", mAP_cls, self.epoch)
+        self.writer.add_scalars("mIOU_cls", mIOU_cls, self.epoch)
+
+        with np.printoptions(precision=4, suppress=True):
+            output = "Epoch: {} | Validation: Loss: {} mIOU: {} mAP: {}".format(self.epoch, loss["loss"], iou, mAP)
+            print(output)
+            log.write(output + '\n')
+            log.flush()
 
     def save_model(self):
         save_path = os.path.join(
@@ -286,6 +333,10 @@ class Trainer:
         """
         self.opt.load_weights_folder = os.path.expanduser(
             self.opt.load_weights_folder)
+
+        if self.opt.load_weights_folder == 'None':
+            print("No weights loaded.")
+            return
 
         assert os.path.isdir(self.opt.load_weights_folder), \
             "Cannot find folder {}".format(self.opt.load_weights_folder)
@@ -329,6 +380,8 @@ class Trainer:
         optimizer.param_groups[1]['lr'] = lr
         optimizer.param_groups[0]['weight_decay'] = decay
         optimizer.param_groups[1]['weight_decay'] = decay
+        self.writer.add_scalar('lr/base', lr, self.epoch)
+        self.writer.add_scalar('lr/transform', lr_transform, self.epoch)
         # for param_group in optimizer.param_groups:
         #     param_group['lr'] = lr
         #     param_group['lr'] = lr_transform

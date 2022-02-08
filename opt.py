@@ -6,10 +6,13 @@ from easydict import EasyDict as edict
 
 def get_args():
     parser = argparse.ArgumentParser(description="Training options")
-    parser.add_argument("--data_path", type=str, default="./data", help="Path to the root data directory")
-    parser.add_argument("--bev_dir", type=str, default="./data", help="Path to the bev directory (Only for habitat dataset)")
-    parser.add_argument("--semantics_dir", type=str, default="./data", help="Path to the semantics directory (Only for habitat dataset)")
-    parser.add_argument("--save_path", type=str, default="./models/", help="Path to save models")
+    parser.add_argument("--data_path", type=str, help="Path to the root data directory")
+    parser.add_argument("--bev_dir", type=str, help="Path to the bev directory (Only for habitat dataset)")
+    parser.add_argument("--semantics_dir", type=str, help="Path to the semantics directory (Only for habitat dataset)")
+    parser.add_argument("--chandrakar_input_dir", type=str, help="Path to the chandrakar input directory (Only for habitat dataset)")
+    parser.add_argument("--floor_path", type=str, help="Path to the floor maps directory (Only for habitat dataset)")
+    parser.add_argument("--save_path", type=str, help="Path to save models")
+    
     parser.add_argument(
         "--load_weights_folder",
         type=str,
@@ -25,7 +28,8 @@ def get_args():
             "3Dobject",
             "odometry",
             "raw",
-            "gibson"],
+            "gibson",
+            "gibson4"],
         help="Data split for training/validation")
     parser.add_argument("--ext", type=str, default="png",
                         help="File extension of the images")

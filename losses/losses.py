@@ -62,13 +62,15 @@ class compute_losses(nn.Module):
         losses["transform_topview_loss"] = 0
         losses["transform_loss"] = 0
 
+        topview_key = 'static' if 'static' in inputs else 'static_gt'
+
         losses["topview_loss"] = self.compute_topview_loss(
             outputs["topview"],
-            inputs[type],
+            inputs[topview_key],
             weight[type])
         losses["transform_topview_loss"] = self.compute_topview_loss(
             outputs["transform_topview"],
-            inputs[type],
+            inputs[topview_key],
             weight[type])
         losses["transform_loss"] = self.compute_transform_losses(
             features,

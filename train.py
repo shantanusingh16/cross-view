@@ -78,9 +78,20 @@ class Trainer:
 
         # Initializing models
         self.models["encoder"] = crossView.Encoder(18, self.opt.height, self.opt.width, True)
+        
+        if self.opt.chandrakar_input_dir != "None":
+            self.multimodal_input = True
+            self.models["ChandrakarEncoder"] = crossView.ChandrakarEncoder(2, [4,4,4,2], 16)
+            self.models["MergeMultimodal"] = crossView.MergeMultimodal(128, 2)
+
+            # self.models["ChandrakarEncoder"] = crossView.ChandrakarEncoder(1, [2,2,2,2], 16)
+            # self.models['CycledViewProjectionMultimodal'] = crossView.CycledViewProjectionMultimodal(in_dim=8, in_channels=128)
+        else:
+            self.multimodal_input = False
 
         self.models['CycledViewProjection'] = crossView.CycledViewProjection(in_dim=8)
         self.models["CrossViewTransformer"] = crossView.CrossViewTransformer(128)
+
 
         self.models["decoder"] = crossView.Decoder(
             self.models["encoder"].resnet_encoder.num_ch_enc, self.opt.num_class, self.opt.occ_map_size)
@@ -130,7 +141,8 @@ class Trainer:
             "odometry": crossView.KITTIOdometry,
             "argo": crossView.Argoverse,
             "raw": crossView.KITTIRAW,
-            "gibson": crossView.GibsonDataset
+            "gibson": crossView.GibsonDataset,
+            "gibson4": crossView.Gibson4Dataset
         }
 
         self.dataset = dataset_dict[self.opt.split]
@@ -188,7 +200,7 @@ class Trainer:
             self.log.flush()
             for loss_name in loss:
                 self.writer.add_scalar(loss_name + '/train', loss[loss_name], global_step=self.epoch)
-                
+
             if self.epoch % self.opt.log_frequency == 0:
                 self.validation(self.log)
                 if self.opt.model_split_save:
@@ -202,11 +214,27 @@ class Trainer:
                 inputs[key] = input.to(self.device)
 
         features = self.models["encoder"](inputs["color"])
-
-        # Cross-view Transformation Module
+        
         x_feature = features
         transform_feature, retransform_features = self.models["CycledViewProjection"](features)
         features = self.models["CrossViewTransformer"](features, transform_feature, retransform_features)
+
+        # if self.multimodal_input:
+        #     chandrakar_features = self.models["ChandrakarEncoder"](inputs["chandrakar_input"])
+        #     features = self.models["MergeMultimodal"](features,  chandrakar_features)
+
+        #     # Cross-view Transformation Module
+        #     x_feature = features
+        #     transform_feature, retransform_features = self.models["CycledViewProjection"](features)
+        #     features = self.models["CrossViewTransformer"](features, transform_feature, retransform_features)
+
+        # if self.multimodal_input:
+        #     chandrakar_features = self.models["ChandrakarEncoder"](inputs["chandrakar_input"])
+
+        #     # Cross-view Transformation Module
+        #     x_feature = features
+        #     transform_feature, retransform_features = self.models["CycledViewProjectionMultimodal"](features, chandrakar_features)
+        #     features = self.models["CrossViewTransformer"](features, transform_feature, retransform_features)
 
         outputs["topview"] = self.models["decoder"](features)
         outputs["transform_topview"] = self.models["transform_decoder"](transform_feature)
@@ -284,6 +312,22 @@ class Trainer:
             # BEV data
             self.writer.add_image(f"bev_pred/{batch_idx}",
                 normalize_image(np.expand_dims(pred, axis=0), (0, 2)), self.epoch)
+
+            if self.multimodal_input:            
+                # Chandrakar input data
+                # clamp_range = (0.1, 10)  # For chandrakar depth
+                clamp_range = (0, 1)  # For chandrakar bev
+                self.writer.add_image(f"chandrakar_input/{batch_idx}",
+                    normalize_image(inputs["chandrakar_input"][0].detach().cpu().data, clamp_range), self.epoch)
+
+            if "semantics_gt" in inputs:
+                semantics = inputs["semantics_gt"][0].detach().cpu()
+                semantics = cv2.resize(semantics.numpy().transpose((1,2,0)), dsize=(128, 128), interpolation=cv2.INTER_NEAREST)
+
+                overlay = np.copy(color) * 0.5
+                overlay[0, semantics==0] *= 2
+                overlay[1, semantics==1] *= 2
+                self.writer.add_image(f"semantics_gt/{batch_idx}", overlay, self.epoch)
         
 
         for loss_name in loss:

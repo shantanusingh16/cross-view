@@ -10,7 +10,59 @@ from .ResnetEncoder import ResnetEncoder
 import matplotlib.pyplot as PLT
 
 # Utils
+class double_conv(nn.Module):
+    """(conv => BN => ReLU) * 2"""
 
+    def __init__(self, in_ch, out_ch):
+        super(double_conv, self).__init__()
+        self.conv = nn.Sequential(
+            nn.Conv2d(in_ch, out_ch, 3, padding=1),
+            nn.BatchNorm2d(out_ch),
+            nn.ReLU(inplace=True),
+            nn.Conv2d(out_ch, out_ch, 3, padding=1),
+            nn.BatchNorm2d(out_ch),
+            nn.ReLU(inplace=True),
+        )
+
+    def forward(self, x):
+        x = self.conv(x)
+        return x
+
+class down(nn.Module):
+    def __init__(self, in_ch, out_ch, filter_size=2):
+        super(down, self).__init__()
+        self.mpconv = nn.Sequential(nn.MaxPool2d(filter_size), double_conv(in_ch, out_ch))
+
+    def forward(self, x):
+        x = self.mpconv(x)
+        return x
+
+class MergeMultimodal(nn.Module):
+    """
+    Merges features from multiple modalities (say RGB, projected occupancy) into a single
+    feature map.
+    """
+
+    def __init__(self, nfeats, nmodes=2):
+        super().__init__()
+        self._nmodes = nmodes
+        self.merge = nn.Sequential(
+            nn.Conv2d(nmodes * nfeats, nfeats, 3, stride=1, padding=1),
+            nn.BatchNorm2d(nfeats),
+            nn.ReLU(),
+            nn.Conv2d(nfeats, nfeats, 3, stride=1, padding=1),
+            nn.BatchNorm2d(nfeats),
+            nn.ReLU(),
+            nn.Conv2d(nfeats, nfeats, 3, stride=1, padding=1),
+        )
+
+    def forward(self, *inputs):
+        """
+        Inputs:
+            xi - (bs, nfeats, H, W)
+        """
+        x = torch.cat(inputs, dim=1)
+        return self.merge(x)
 
 class ConvBlock(nn.Module):
     """Layer to perform a convolution followed by ELU
@@ -106,6 +158,23 @@ class Encoder(nn.Module):
         x = self.pool(x)
         return x
 
+class ChandrakarEncoder(nn.Module):
+    def __init__(self, n_channels, scales, nsf=16):
+        super().__init__()
+        self.inc = double_conv(n_channels, nsf)
+        self.down1 = down(nsf, nsf * 2, scales[0])
+        self.down2 = down(nsf * 2, nsf * 4, scales[1])
+        self.down3 = down(nsf * 4, nsf * 8, scales[2])
+        self.down4 = down(nsf * 8, nsf * 8, scales[3])
+
+    def forward(self, x):
+        x1 = self.inc(x)  # (bs, nsf, ..., ...)
+        x2 = self.down1(x1)  # (bs, nsf*2, ... ,...)
+        x3 = self.down2(x2)  # (bs, nsf*4, ..., ...)
+        x4 = self.down3(x3)  # (bs, nsf*8, ..., ...)
+        x5 = self.down4(x4)  # (bs, nsf*8, ..., ...)
+
+        return x5
 
 class Decoder(nn.Module):
     """ Encodes the Image into low-dimensional feature representation

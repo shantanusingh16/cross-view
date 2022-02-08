@@ -92,11 +92,12 @@ def img_to_lid(depth_map, cam_mat, label=None):
     return pts_rect
 
 def process_topview(topview, w, h):
+    topview = topview.crop((32, 64, 96, 128)) # To crop out the bottom center 3.2x3.2 m map from 6.4x6.4m map
     topview = topview.resize((w, h), pil.NEAREST)
     topview = np.array(topview)
     return topview
 
-class GibsonDataset(data.Dataset):
+class Gibson4Dataset(data.Dataset):
     """Dataset class for gibson
 
     Args:
@@ -106,7 +107,7 @@ class GibsonDataset(data.Dataset):
         load_keys
     """
     def __init__(self, opt, filenames, is_train=True):
-        super(GibsonDataset, self).__init__()
+        super(Gibson4Dataset, self).__init__()
 
         self.opt = opt
         self.filenames = filenames
@@ -135,9 +136,12 @@ class GibsonDataset(data.Dataset):
 
         self.crop_img = transforms.CenterCrop(self.height)
 
-        self.full_res_shape = (640, 480)
-        self.focal_length = 320
-        self.width_ar = (self.full_res_shape[0] * self.height) // self.full_res_shape[1]
+        full_res_shape = (1024, 1024)
+        hfov = 90
+        focal_length = full_res_shape[0]/ (2 * np.tan(np.deg2rad(hfov/2)))
+
+        self.width_ar = (full_res_shape[0] * self.height) // full_res_shape[1]
+        self.focal_length = focal_length * self.width_ar / full_res_shape[0]  # Scaling based on given input shape
 
         self.resize = transforms.Resize((self.height, self.width_ar), interpolation=self.interp)
 
@@ -147,9 +151,9 @@ class GibsonDataset(data.Dataset):
 
         # Since we are cropping, the field of view changes, but the focal length remains the same.
         # The cropping is equal on both sides, so (cx, cy) are always at image center.
-        f = self.focal_length * self.width_ar / self.full_res_shape[0]
-        cx = int(self.opt.width // 2)
-        cy = int(self.opt.height // 2)
+        f = self.focal_length
+        cx = int(self.width // 2)
+        cy = int(self.height // 2)
         self.K = np.array([[f, 0, cx, 0],
                            [0, f, cy, 0],
                            [0, 0, 1, 0],
@@ -236,34 +240,31 @@ class GibsonDataset(data.Dataset):
         do_color_aug = self.is_train and random.random() > 0.5
         do_flip = self.is_train and random.random() > 0.5
 
-        mapped_side = 'l'
-
         line = self.filenames[index].split()
         folder = line[0]
+        camera_pose = line[1]
+        frame_index = int(line[2])
 
-        frame_index = int(line[1])
-
-        inputs["color"] = self.get_color(folder, frame_index, mapped_side, do_flip)
+        inputs["color"] = self.get_color(folder, frame_index, camera_pose, do_flip)
 
         bev_key = "static" if self.is_train else "static_gt"
-        inputs[bev_key] = self.get_bev(folder, frame_index, mapped_side, do_flip)
+        inputs[bev_key] = self.get_bev(folder, frame_index, camera_pose, do_flip)
 
         # Project Depth to BEV based on height thresholding. (For OccAnt Models)
-        if self.chandrakar_input_dir is not None:
+        if os.path.exists(self.chandrakar_input_dir):
             ego_map_fn = self.read_ego_map_gt
-            inputs["chandrakar_input"] = ego_map_fn(folder, frame_index, mapped_side, do_flip)
+            inputs["chandrakar_input"] = ego_map_fn(folder, frame_index, camera_pose, do_flip)
         # else:
-        #     ego_map_fn = self.get_ego_map_gt
-        
-        
-        if self.floor_path is not None:
+            # ego_map_fn = self.get_ego_map_gt
+    
+        if os.path.exists(self.floor_path):
             inputs["discr"] = self.get_floor()
 
-        if self.semantics_dir is not None:
-            semantics =  np.expand_dims(self.get_semantics(folder, frame_index, mapped_side, do_flip), 0)
+        if os.path.exists(self.semantics_dir):
+            semantics =  np.expand_dims(self.get_semantics(folder, frame_index, camera_pose, do_flip), 0)
             inputs["semantics_gt"] = torch.from_numpy(semantics.astype(np.float32))
 
-        depth = torch.from_numpy(self.get_depth(folder, frame_index, mapped_side, do_flip))
+        depth = torch.from_numpy(self.get_depth(folder, frame_index, camera_pose, do_flip))
         inputs["depth_gt"] = depth
 
         # adjusting intrinsics to match each scale in the pyramid
@@ -282,15 +283,9 @@ class GibsonDataset(data.Dataset):
 
         return inputs
 
-    def get_color(self, folder, frame_index, side, do_flip):
-
-        if side == 'r':
-            side = 'right'
-        else:
-            side = 'left'
-
+    def get_color(self, folder, frame_index, camera_pose, do_flip):
         color_dir = os.path.join(self.color_dir, folder)
-        color_path = os.path.join(color_dir, "0", f"{side}_rgb", str(frame_index) + ".jpg")
+        color_path = os.path.join(color_dir, "0", camera_pose, "RGB", str(frame_index) + ".jpg")
         color = self.loader(color_path)
 
         if do_flip:
@@ -301,13 +296,15 @@ class GibsonDataset(data.Dataset):
     def check_depth(self):
         line = self.filenames[0].split()
         scene_name = line[0]
-        frame_index = int(line[1])
+        camera_pose = line[1]
+        frame_index = int(line[2])
 
         depth_img = os.path.join(
             self.depth_dir,
             scene_name,
             "0",
-            "left_depth",
+            camera_pose,
+            "DEPTH",
             "{}.png".format(int(frame_index)))
 
         return os.path.isfile(depth_img)
@@ -315,26 +312,23 @@ class GibsonDataset(data.Dataset):
     def check_pose(self):
         line = self.filenames[0].split()
         scene_name = line[0]
-        frame_index = int(line[1])
+        camera_pose = line[1]
+        frame_index = int(line[2])
 
         pose_file = os.path.join(
             self.pose_dir,
             scene_name,
             "0",
+            camera_pose,
             "pose",
             "{}.npy".format(int(frame_index)))
 
         return os.path.isfile(pose_file)
         
-    def get_depth(self, folder, frame_index, side, do_flip):
-        if side == 'r':
-            side = 'right'
-        else:
-            side = 'left'
-
+    def get_depth(self, folder, frame_index, camera_pose, do_flip):
         folder = os.path.join(self.depth_dir, folder)
 
-        depth_path = os.path.join(folder, "0", f"{side}_depth", str(frame_index) + ".png")
+        depth_path = os.path.join(folder, "0", camera_pose, "DEPTH", str(frame_index) + ".png")
         depth = self.loader(depth_path).resize((self.width_ar, self.height), pil.NEAREST)
 
         if do_flip:
@@ -344,14 +338,9 @@ class GibsonDataset(data.Dataset):
 
         return depth
 
-    def get_semantics(self, folder, frame_index, side, do_flip, raw=False):
-        if side == 'r':
-            side = 'right'
-        else:
-            side = 'left'
-
+    def get_semantics(self, folder, frame_index, camera_pose, do_flip, raw=False):
         sem_dir = os.path.join(self.semantics_dir, folder)
-        sem_path = os.path.join(sem_dir, "0", f"{side}_semantic", str(frame_index) + ".png")
+        sem_path = os.path.join(sem_dir, "0", camera_pose, "semantics", str(frame_index) + ".png")
         semantics = cv2.imread(sem_path, -1)
         semantics = cv2.resize(semantics, (self.width_ar, self.height), interpolation=cv2.INTER_NEAREST)
 
@@ -363,20 +352,15 @@ class GibsonDataset(data.Dataset):
 
         return semantics.copy()
 
-    def get_pose(self, folder, frame_index, side, do_flip):
+    def get_pose(self, folder, frame_index, camera_pose, do_flip):
         # Refer to photometric_reconstruction notebook.
         
         cam_to_agent = np.eye(4)
         cam_to_agent[1,1] = -1  # Flip the y-axis of the point-cloud to be pointing upwards
         cam_to_agent[2,2] = -1  # Flip the z-axis of the point-cloud to follow right-handed coordinate system.
 
-        if side == 'r':
-            cam_to_agent[:3, 3] = np.array([self.baseline/2, self.cam_height, 0])
-        else:
-            cam_to_agent[:3, 3] = np.array([-self.baseline/2, self.cam_height, 0])
-
         pose_dir = os.path.join(self.pose_dir, folder)
-        pose_path = os.path.join(pose_dir, "0", "pose", str(frame_index) + ".npy")
+        pose_path = os.path.join(pose_dir, "0", camera_pose, "pose", str(frame_index) + ".npy")
         agent_pose = np.load(pose_path, allow_pickle=True).item()
     
         rot = Rotation.from_quat([agent_pose['rotation'].x, agent_pose['rotation'].y, 
@@ -396,8 +380,8 @@ class GibsonDataset(data.Dataset):
 
         return M
     
-    def get_ego_map_gt(self, folder, frame_index, side, do_flip):
-        depth = self.get_depth(folder, frame_index, side, do_flip)[:self.height, (self.width_ar - self.height)//2 : (self.width_ar + self.height)//2]
+    def get_ego_map_gt(self, folder, frame_index, camera_pose, do_flip):
+        depth = self.get_depth(folder, frame_index, camera_pose, do_flip)[:self.height, (self.width_ar - self.height)//2 : (self.width_ar + self.height)//2]
         map = self.depth_projector.get_depth_projection(depth)
 
         ego_map_gt = map.astype(np.uint8)
@@ -410,16 +394,11 @@ class GibsonDataset(data.Dataset):
 
         return ego_map_gt
 
-    def read_ego_map_gt(self, folder, frame_index, side, do_flip):
-        if side == 'r':
-            side = 'right'
-        else:
-            side = 'left'
-
+    def read_ego_map_gt(self, folder, frame_index, camera_pose, do_flip):
         folder = os.path.join(self.chandrakar_input_dir, folder)
 
         # Chandrakar bev
-        bev_path = os.path.join(folder, '0', 'pred_bev', str(frame_index) + ".png")
+        bev_path = os.path.join(folder, '0', camera_pose, 'pred_bev', str(frame_index) + ".png")
         bev = cv2.imread(bev_path, -1)
 
         if do_flip:
@@ -465,15 +444,10 @@ class GibsonDataset(data.Dataset):
 
         return ego_map
 
-    def get_bev(self, folder, frame_index, side, do_flip):
-        if side == 'r':
-            side = 'right'
-        else:
-            side = 'left'
-
+    def get_bev(self, folder, frame_index, camera_pose, do_flip):
         folder = os.path.join(self.bev_dir, folder)
 
-        bev_path = os.path.join(folder, str(frame_index) + ".png")
+        bev_path = os.path.join(folder, camera_pose, "partial_occ", str(frame_index) + ".png")
         bev = self.loader(bev_path)
 
         if do_flip:
@@ -489,26 +463,24 @@ class GibsonDataset(data.Dataset):
 
 if __name__ == '__main__':
     opt = dict()
-    opt["data_path"] = '/scratch/shantanu/HabitatGibson/data'
-    opt["height"] = 480
-    opt["width"] = 480
+    opt["data_path"] = '/scratch/jaidev/new'
+    opt["height"] = 1024
+    opt["width"] = 1024
     opt["baseline"] = 0.2
     opt["cam_height"] = 1
-    opt["focal_length"] = 320
-    opt["bev_width"] = 64
-    opt["bev_height"] = 64
-    opt["bev_res"] = 0.05
+    opt["focal_length"] = 512
+    opt["occ_map_size"] = 64
 
     opt["depth_dir"] = None
-    opt["bev_dir"] = '/scratch/shantanu/HabitatGibson/bevs/partial_occupancy'
+    opt["bev_dir"] = '/scratch/jaidev/new_partialmaps_120'
 
-    split_path = 'splits/gibson/gibson_filtered_val_depth.txt'
+    split_path = 'splits/gibson4/train_files.txt'
     with open(split_path, 'r') as f:
         filenames = f.read().splitlines()
 
     is_train = True
 
-    dataset = GibsonDataset(opt, filenames, is_train)
+    dataset = Gibson4Dataset(opt, filenames, is_train)
     dl = data.DataLoader(dataset, batch_size=4, shuffle=False, num_workers=4, \
         drop_last=False)
 
@@ -521,24 +493,24 @@ if __name__ == '__main__':
         tmp_dir = '/scratch/shantanu/tmp'
         os.makedirs(tmp_dir, exist_ok=True)
         for idx, filepath in enumerate(tmp['filename']):
-            folder, fileidx = filepath.split()
-            img_path = os.path.join(opt['data_path'], folder, '0', 'left_rgb', f'{fileidx}.jpg')
+            folder, camera_pose, fileidx = filepath.split()
+            img_path = os.path.join(opt['data_path'], folder, '0', camera_pose, 'RGB', f'{fileidx}.jpg')
             org_img = cv2.imread(img_path, -1)
-            org_img_path = os.path.join(tmp_dir, '{}_{}_org.jpg'.format(folder.replace('/', '_'), fileidx))
+            org_img_path = os.path.join(tmp_dir, '{}_{}_{}_org.jpg'.format(folder.replace('/', '_'), camera_pose, fileidx))
             cv2.imwrite(org_img_path, org_img)
             
             color = tmp['color_aug'][idx, ...]
             conv_img = (inv_normalize(color.cpu().detach()).permute(1, 2, 0).numpy() * 255).astype(np.uint8)
-            conv_img_path = os.path.join(tmp_dir, '{}_{}_conv.jpg'.format(folder.replace('/', '_'), fileidx))
+            conv_img_path = os.path.join(tmp_dir, '{}_{}_{}_conv.jpg'.format(folder.replace('/', '_'), camera_pose, fileidx))
             cv2.imwrite(conv_img_path, cv2.cvtColor(conv_img, cv2.COLOR_RGB2BGR))
 
             depth = tmp['depth_gt'][idx, ...].cpu().detach().numpy() 
             depth = (depth * 6553.5).astype(np.uint16)
-            depth_path = os.path.join(tmp_dir, '{}_{}_depth.png'.format(folder.replace('/', '_'), fileidx))
+            depth_path = os.path.join(tmp_dir, '{}_{}_{}_depth.png'.format(folder.replace('/', '_'), camera_pose, fileidx))
             cv2.imwrite(depth_path, depth)
 
-            bev = tmp['static'][idx, ...].cpu().detach().numpy() 
+            bev = tmp['static'][idx, ...].cpu().detach().squeeze(0).numpy() 
             bev = (bev * 127).astype(np.uint8)
-            bev_path = os.path.join(tmp_dir, '{}_{}_bev.png'.format(folder.replace('/', '_'), fileidx))
+            bev_path = os.path.join(tmp_dir, '{}_{}_{}_bev.png'.format(folder.replace('/', '_'), camera_pose, fileidx))
             cv2.imwrite(bev_path, bev)
         break

@@ -176,9 +176,9 @@ class GibsonDataset(data.Dataset):
         # self.depth_projector = DepthProjector(self.opt)
 
         self.ego_map_transform = A.Compose([
-            # A.Resize(height=self.height, width=self.width_ar, interpolation=cv2.INTER_NEAREST, always_apply=True), # If input is depth
-            # A.CenterCrop(height=self.height, width=self.width, always_apply=True)
-            A.Resize(height=self.bev_height, width=self.bev_width, interpolation=cv2.INTER_NEAREST, always_apply=True), # If input is bev
+            A.Resize(height=self.height, width=self.width_ar, interpolation=cv2.INTER_NEAREST, always_apply=True), # If input is depth
+            A.CenterCrop(height=self.height, width=self.width, always_apply=True),
+            # A.Resize(height=self.bev_height, width=self.bev_width, interpolation=cv2.INTER_NEAREST, always_apply=True), # If input is bev
             # A.augmentations.CoarseDropout(max_holes=8, max_height=32, max_width=32, min_holes=4, min_height=16, min_width=16, p=0.5)
             # A.augmentations.geometric.ShiftScaleRotate(shift_limit=0, scale_limit=0, rotate_limit=30, \
             #     interpolation=cv2.INTER_NEAREST, border_mode=cv2.BORDER_CONSTANT, value=0, p=0.8)
@@ -248,18 +248,16 @@ class GibsonDataset(data.Dataset):
         bev_key = "static" if self.is_train else "static_gt"
         inputs[bev_key] = self.get_bev(folder, frame_index, mapped_side, do_flip)
 
-        # Project Depth to BEV based on height thresholding. (For OccAnt Models)
-        if self.chandrakar_input_dir is not None:
+        if os.path.exists(self.chandrakar_input_dir):
             ego_map_fn = self.read_ego_map_gt
             inputs["chandrakar_input"] = ego_map_fn(folder, frame_index, mapped_side, do_flip)
         # else:
         #     ego_map_fn = self.get_ego_map_gt
         
-        
-        if self.floor_path is not None:
+        if os.path.exists(self.floor_path):
             inputs["discr"] = self.get_floor()
 
-        if self.semantics_dir is not None:
+        if os.path.exists(self.semantics_dir):
             semantics =  np.expand_dims(self.get_semantics(folder, frame_index, mapped_side, do_flip), 0)
             inputs["semantics_gt"] = torch.from_numpy(semantics.astype(np.float32))
 
@@ -418,34 +416,35 @@ class GibsonDataset(data.Dataset):
 
         folder = os.path.join(self.chandrakar_input_dir, folder)
 
-        # Chandrakar bev
-        bev_path = os.path.join(folder, '0', 'pred_bev', str(frame_index) + ".png")
-        bev = cv2.imread(bev_path, -1)
+        # # Chandrakar bev
+        # bev_path = os.path.join(folder, '0', 'pred_bev', str(frame_index) + ".png")
+        # bev = cv2.imread(bev_path, -1)
 
-        if do_flip:
-            bev = np.fliplr(bev)
+        # if do_flip:
+        #     bev = np.fliplr(bev)
         
-        # Single channel, 3-value map
-        bev = bev.astype(np.float32) / 254
-        ego_map = bev.reshape((*bev.shape, 1))  
+        # # Single channel, 3-value map
+        # bev = bev.astype(np.float32) / 254
+        # ego_map = bev.reshape((*bev.shape, 1))  
         
         # 2 channel, 1-value map
         # ego_map = np.zeros((*bev.shape, 2), dtype=np.float32)
         # ego_map[bev == 1, 0] = 1  # Occupied 
         # ego_map[np.logical_or(bev==1, bev==2), 1]= 1 # Explored
 
-        # # Chandrakar depth
-        # chandrakar_depth_path = os.path.join(folder, '0', 'pred_depth', str(frame_index) + ".png")
-        # depth = cv2.imread(chandrakar_depth_path, -1)
+        # Chandrakar depth
+        chandrakar_depth_path = os.path.join(folder, '0', 'pred_depth', str(frame_index) + ".png")
+        depth = cv2.imread(chandrakar_depth_path, -1)
 
-        # if do_flip:
-        #     depth = np.fliplr(depth)
+        if do_flip:
+            depth = np.fliplr(depth)
 
-        # # Raw continous depth with a mask
-        # depth = depth/6553.5
-        # ego_map = np.zeros((*depth.shape, 2), dtype=np.float32)
-        # ego_map[depth!=0, 0] = 1
-        # ego_map[..., 1] = depth
+        # Raw continous depth with a mask
+        depth = depth/6553.5
+        depth = np.clip(depth, a_min=0, a_max=10.0)
+        ego_map = np.zeros((*depth.shape, 2), dtype=np.float32)
+        ego_map[depth!=0, 0] = 1
+        ego_map[..., 1] = depth / 10
 
         # # Discretized depth 
         # num_channels = 128

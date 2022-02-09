@@ -78,6 +78,7 @@ class Trainer:
 
         # Initializing models
         self.models["encoder"] = crossView.Encoder(18, self.opt.height, self.opt.width, True)
+        self.models["BasicTransformer"] = crossView.BasicTransformer(8, 128)
         
         if self.opt.chandrakar_input_dir != "None":
             self.multimodal_input = True
@@ -91,7 +92,6 @@ class Trainer:
 
         self.models['CycledViewProjection'] = crossView.CycledViewProjection(in_dim=8)
         self.models["CrossViewTransformer"] = crossView.CrossViewTransformer(128)
-
 
         self.models["decoder"] = crossView.Decoder(
             self.models["encoder"].resnet_encoder.num_ch_enc, self.opt.num_class, self.opt.occ_map_size)
@@ -169,7 +169,7 @@ class Trainer:
             drop_last=True)
         self.val_loader = DataLoader(
             val_dataset,
-            1,
+            self.opt.batch_size,
             True,
             num_workers=self.opt.num_workers,
             pin_memory=True,
@@ -219,9 +219,12 @@ class Trainer:
         transform_feature, retransform_features = self.models["CycledViewProjection"](features)
         features = self.models["CrossViewTransformer"](features, transform_feature, retransform_features)
 
+        # x_feature = retransform_features = transform_feature = features
+        # features = self.models["BasicTransformer"](features)
+
         # if self.multimodal_input:
         #     chandrakar_features = self.models["ChandrakarEncoder"](inputs["chandrakar_input"])
-        #     features = self.models["MergeMultimodal"](features,  chandrakar_features)
+        #     # features = self.models["MergeMultimodal"](features,  chandrakar_features)
 
         #     # Cross-view Transformation Module
         #     x_feature = features
@@ -235,6 +238,8 @@ class Trainer:
         #     x_feature = features
         #     transform_feature, retransform_features = self.models["CycledViewProjectionMultimodal"](features, chandrakar_features)
         #     features = self.models["CrossViewTransformer"](features, transform_feature, retransform_features)
+
+        # features = self.models["MergeMultimodal"](features,  chandrakar_features)
 
         outputs["topview"] = self.models["decoder"](features)
         outputs["transform_topview"] = self.models["transform_decoder"](transform_feature)
@@ -290,10 +295,10 @@ class Trainer:
 
             pred = np.squeeze(
                 torch.argmax(
-                    outputs["topview"].detach(),
+                    outputs["topview"][:1].detach(),
                     1).cpu().numpy())
             true = np.squeeze(
-                inputs[self.opt.type + "_gt"].detach().cpu().numpy())
+                inputs[self.opt.type + "_gt"][:1].detach().cpu().numpy())
             iou += mean_IU(pred, true, self.opt.num_class)
             mAP += mean_precision(pred, true, self.opt.num_class)
 
@@ -315,10 +320,10 @@ class Trainer:
 
             if self.multimodal_input:            
                 # Chandrakar input data
-                # clamp_range = (0.1, 10)  # For chandrakar depth
-                clamp_range = (0, 1)  # For chandrakar bev
-                self.writer.add_image(f"chandrakar_input/{batch_idx}",
-                    normalize_image(inputs["chandrakar_input"][0].detach().cpu().data, clamp_range), self.epoch)
+                chandrakar_input = inputs["chandrakar_input"][0].detach().cpu()
+                # For chandrakar depth input
+                chandrakar_input = np.expand_dims(cv2.resize(chandrakar_input.numpy().transpose((1,2,0))[..., 1:], dsize=(128, 128)), axis=0) # Taking the second channel only for depth
+                self.writer.add_image(f"chandrakar_input/{batch_idx}", chandrakar_input, self.epoch)
 
             if "semantics_gt" in inputs:
                 semantics = inputs["semantics_gt"][0].detach().cpu()
@@ -329,9 +334,8 @@ class Trainer:
                 overlay[1, semantics==1] *= 2
                 self.writer.add_image(f"semantics_gt/{batch_idx}", overlay, self.epoch)
         
-
         for loss_name in loss:
-            loss[loss_name] /= len(self.train_loader)
+            loss[loss_name] /= len(self.val_loader)
             self.writer.add_scalar(loss_name + '/val', loss[loss_name], global_step=self.epoch)
 
         iou /= len(self.val_loader)

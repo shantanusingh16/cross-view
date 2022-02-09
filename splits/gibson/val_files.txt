@@ -1,1 +1,1 @@
-splits/gibson/val_files.txt
+splits/gibson/gibson_8fid_val.txt

@@ -78,7 +78,7 @@ class Trainer:
 
         # Initializing models
         self.models["encoder"] = crossView.Encoder(18, self.opt.height, self.opt.width, True)
-        self.models["BasicTransformer"] = crossView.BasicTransformer(8, 128)
+        # self.models["BasicTransformer"] = crossView.BasicTransformer(8, 128)
         
         if self.opt.chandrakar_input_dir != "None":
             self.multimodal_input = True
@@ -218,6 +218,9 @@ class Trainer:
         x_feature = features
         transform_feature, retransform_features = self.models["CycledViewProjection"](features)
         features = self.models["CrossViewTransformer"](features, transform_feature, retransform_features)
+        
+        # chandrakar_features = self.models["ChandrakarEncoder"](inputs["chandrakar_input"])
+        # features = self.models["MergeMultimodal"](features,  chandrakar_features)
 
         # x_feature = retransform_features = transform_feature = features
         # features = self.models["BasicTransformer"](features)

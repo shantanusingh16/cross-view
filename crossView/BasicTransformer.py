@@ -16,39 +16,41 @@ from crossView.CycledViewProjection import TransformModule
 class BasicTransformer(nn.Module):
     def __init__(self, patch_size, in_dim):
         super(BasicTransformer, self).__init__()
-        self.transform_module = TransformModule(dim=patch_size)
-        self.mpl_head = TransformModule(dim=patch_size)
+        
+        self.mpl_head1 = nn.Sequential(nn.BatchNorm2d(in_dim), TransformModule(dim=patch_size))
+        self.mpl_head2 = nn.Sequential(nn.BatchNorm2d(in_dim), TransformModule(dim=patch_size))
         
         self.query_conv = nn.Conv2d(in_channels=in_dim, out_channels=in_dim // 8, kernel_size=1)
         self.key_conv = nn.Conv2d(in_channels=in_dim, out_channels=in_dim // 8, kernel_size=1)
         self.value_conv = nn.Conv2d(in_channels=in_dim, out_channels=in_dim, kernel_size=1)
-        self.f_conv = nn.Conv2d(in_channels=in_dim * 2, out_channels=in_dim, kernel_size=3, stride=1, padding=1,
-                                bias=True)
+        
+        # self.fc = nn.Sequential(nn.Linear(patch_size, patch_size), nn.Dropout(p=0.5))
 
-        self.res_conv = nn.Conv2d(in_channels=in_dim * 2, out_channels=in_dim, kernel_size=1)
+        self.merge1 = nn.Conv2d(in_channels=in_dim * 2, out_channels=in_dim, kernel_size=1)
+        self.merge2 = nn.Conv2d(in_channels=in_dim * 2, out_channels=in_dim, kernel_size=1)
         self.softmax = nn.Softmax(dim=-1)
 
     def forward(self, front_x):
-        features = self.transform_module(front_x)
+        features = self.mpl_head1(front_x)
+        
         m_batchsize, C, width, height = features.size()
         proj_query = self.query_conv(features).view(m_batchsize, -1, width * height)  # B x C x (N)
         proj_key = self.key_conv(features).view(m_batchsize, -1, width * height).permute(0, 2, 1)  # B x C x (W*H)
 
-        proj_query = proj_query/torch.linalg.norm(proj_query, ord=2, dim=-1, keepdim=True)
-        proj_key = proj_key/torch.linalg.norm(proj_key, ord=2, dim=-1, keepdim=True)
+        # proj_query = proj_query/torch.linalg.norm(proj_query, ord=2, dim=-1, keepdim=True)
+        # proj_key = proj_key/torch.linalg.norm(proj_key, ord=2, dim=-1, keepdim=True)
 
         energy = torch.bmm(proj_key, proj_query) / (C ** 0.5) # transpose check
         energy = self.softmax(energy)
         proj_value = self.value_conv(features).view(m_batchsize, -1, width * height).permute(0, 2, 1)  # B x C x N
 
-        T = torch.bmm(energy, proj_value).permute(0, 2, 1).view(m_batchsize, -1, width, height)
+        V = torch.bmm(energy, proj_value).permute(0, 2, 1).view(m_batchsize, -1, width, height)
 
-        front_res = torch.cat((features, T), dim=1)
-        front_res = self.res_conv(front_res)
-        front_res = self.mpl_head(front_res)
+        T = self.merge1(torch.cat((features, V), dim=1))  # Skip connection 1
+        
+        front_res = self.mpl_head2(front_res)
 
-        output = features + front_res
-
+        output = self.merge2(torch.cat((front_res, V), dim=1)) # Skip connection 2
         return output
 
 

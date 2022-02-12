@@ -75,8 +75,8 @@ class compute_losses(nn.Module):
         losses["transform_loss"] = self.compute_transform_losses(
             features,
             retransform_features)
-        losses["loss"] = losses["topview_loss"] + 0.001 * losses["transform_loss"] + 1 * losses["transform_topview_loss"]
-        # losses["loss"] = losses["topview_loss"]
+        # losses["loss"] = losses["topview_loss"] + 0.001 * losses["transform_loss"] + 1 * losses["transform_topview_loss"]
+        losses["loss"] = losses["topview_loss"]
 
         return losses
 

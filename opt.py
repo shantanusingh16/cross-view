@@ -53,6 +53,8 @@ def get_args():
                         help="learning rate")
     parser.add_argument("--lr_transform", type=float, default=1e-3,
                         help="learning rate")
+    parser.add_argument("--grad_clip_value", type=float, default=None,
+                        help="gradient clip value")
     parser.add_argument('--lr_steps', default=[50], type=float, nargs="+",  # attention
                         metavar='LRSteps', help='epochs to decay learning rate by 10')
     parser.add_argument('--weight_decay', '--wd', default=1e-5, type=float,

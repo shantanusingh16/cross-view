@@ -33,6 +33,8 @@ import tqdm
 from losses import compute_losses
 from utils import mean_IU, mean_precision, normalize_image, invnormalize_imagenet
 
+import pickle
+
 
 def readlines(filename):
     """Read all the lines in a text file and return as a list
@@ -64,8 +66,8 @@ class Trainer:
         self.start_epoch = 0
         self.scheduler = 0
         # Save log and models path
-        self.opt.log_root = os.path.join(self.opt.log_root, self.opt.split)
-        self.opt.save_path = os.path.join(self.opt.save_path, self.opt.split)
+        # self.opt.log_root = os.path.join(self.opt.log_root, self.opt.split)
+        # self.opt.save_path = os.path.join(self.opt.save_path, self.opt.split)
         if self.opt.split == "argo":
             self.opt.log_root = os.path.join(self.opt.log_root, self.opt.type)
             self.opt.save_path = os.path.join(self.opt.save_path, self.opt.type)
@@ -78,7 +80,7 @@ class Trainer:
 
         # Initializing models
         self.models["encoder"] = crossView.Encoder(18, self.opt.height, self.opt.width, True)
-        # self.models["BasicTransformer"] = crossView.BasicTransformer(8, 128)
+        self.models["BasicTransformer"] = crossView.BasicTransformer(8, 128)
         
         if self.opt.chandrakar_input_dir != "None":
             self.multimodal_input = True
@@ -90,8 +92,8 @@ class Trainer:
         else:
             self.multimodal_input = False
 
-        self.models['CycledViewProjection'] = crossView.CycledViewProjection(in_dim=8)
-        self.models["CrossViewTransformer"] = crossView.CrossViewTransformer(128)
+        # self.models['CycledViewProjection'] = crossView.CycledViewProjection(in_dim=8)
+        # self.models["CrossViewTransformer"] = crossView.CrossViewTransformer(128)
 
         self.models["decoder"] = crossView.Decoder(
             self.models["encoder"].resnet_encoder.num_ch_enc, self.opt.num_class, self.opt.occ_map_size)
@@ -111,6 +113,12 @@ class Trainer:
             {"params": self.transform_parameters_to_train, "lr": self.opt.lr_transform},
             {"params": self.base_parameters_to_train, "lr": self.opt.lr},
         ]
+
+        if self.opt.grad_clip_value is not None:
+            for p in self.transform_parameters_to_train:
+                p.register_hook(lambda grad: torch.clamp(grad, -self.opt.grad_clip_value, self.opt.grad_clip_value))
+            for p in self.base_parameters_to_train:
+                p.register_hook(lambda grad: torch.clamp(grad, -self.opt.grad_clip_value, self.opt.grad_clip_value))
 
         # Optimization
         self.model_optimizer = optim.Adam(
@@ -215,15 +223,14 @@ class Trainer:
 
         features = self.models["encoder"](inputs["color"])
         
-        x_feature = features
-        transform_feature, retransform_features = self.models["CycledViewProjection"](features)
-        features = self.models["CrossViewTransformer"](features, transform_feature, retransform_features)
+        # x_feature = features
+        # transform_feature, retransform_features = self.models["CycledViewProjection"](features)
+        # features = self.models["CrossViewTransformer"](features, transform_feature, retransform_features)
         
-        # chandrakar_features = self.models["ChandrakarEncoder"](inputs["chandrakar_input"])
-        # features = self.models["MergeMultimodal"](features,  chandrakar_features)
-
-        # x_feature = retransform_features = transform_feature = features
-        # features = self.models["BasicTransformer"](features)
+        chandrakar_features = self.models["ChandrakarEncoder"](inputs["chandrakar_input"])
+        features = self.models["MergeMultimodal"](features,  chandrakar_features)
+        x_feature = retransform_features = transform_feature = features
+        features = self.models["BasicTransformer"](features)
 
         # if self.multimodal_input:
         #     chandrakar_features = self.models["ChandrakarEncoder"](inputs["chandrakar_input"])
@@ -246,8 +253,8 @@ class Trainer:
 
         outputs["topview"] = self.models["decoder"](features)
         outputs["transform_topview"] = self.models["transform_decoder"](transform_feature)
-        if validation:
-            return outputs
+        # if validation:
+        #     return outputs
         losses = self.criterion(self.opt, self.weight, inputs, outputs, x_feature, retransform_features)
 
         return outputs, losses
@@ -262,12 +269,21 @@ class Trainer:
             "loss_discr": 0.0
         }
         accumulation_steps = 8
+        valid_batches = 0
         for batch_idx, inputs in tqdm.tqdm(enumerate(self.train_loader)):
             outputs, losses = self.process_batch(inputs)
             self.model_optimizer.zero_grad()
 
+            if torch.isnan(losses["loss"]) or torch.isinf(losses["loss"]):
+                self.log.write("NaN loss at Epoch: %d Batch_idx: %d Filenames: %s \n" % (self.epoch, batch_idx, ",".join(inputs["filename"])))
+                self.log.flush()
+                continue
+
+            valid_batches += 1
+
             losses["loss"] = losses["loss"] / accumulation_steps
             losses["loss"].backward()
+
             # if ((batch_idx + 1) % accumulation_steps) == 0:
             self.model_optimizer.step()
             #     self.model_optimizer.zero_grad()
@@ -276,12 +292,31 @@ class Trainer:
                 loss[loss_name] += losses[loss_name].item()
         # self.scheduler.step()
         for loss_name in loss:
-            loss[loss_name] /= len(self.train_loader)
+            loss[loss_name] /= valid_batches
+
+        if len(self.train_loader) > valid_batches:
+            print("NaN loss encountered in {} batches".format(len(self.train_loader) - valid_batches))
+            
         return loss
+
+    def parse_log_data(self, val):
+        if isinstance(val, dict):
+            out = {}
+            for k, v in val.items():
+                out[k] = self.parse_log_data(v)
+            return out
+        elif isinstance(val, torch.Tensor):
+            return val.cpu().detach().item()
+        else:
+            return val
 
     def validation(self, log):
         iou, mAP = np.array([0.] * self.opt.num_class), np.array([0.] * self.opt.num_class)
         # trans_iou, trans_mAP = np.array([0.] * self.opt.num_class), np.array([0.] * self.opt.num_class)
+
+        # Store scalars as pkl
+        step_info = {}
+
         loss = {
             "loss": 0.0,
             "topview_loss": 0.0,
@@ -340,6 +375,7 @@ class Trainer:
         for loss_name in loss:
             loss[loss_name] /= len(self.val_loader)
             self.writer.add_scalar(loss_name + '/val', loss[loss_name], global_step=self.epoch)
+            step_info[loss_name] = self.parse_log_data(loss[loss_name])
 
         iou /= len(self.val_loader)
         mAP /= len(self.val_loader)
@@ -349,6 +385,19 @@ class Trainer:
         
         self.writer.add_scalars("mAP_cls", mAP_cls, self.epoch)
         self.writer.add_scalars("mIOU_cls", mIOU_cls, self.epoch)
+
+        step_info["mAP_cls"] = self.parse_log_data(mAP_cls)
+        step_info["mIOU_cls"] = self.parse_log_data(mIOU_cls)
+        step_info["epoch"] = self.epoch
+        step_info['learning_rate'] = {
+            'base': self.parse_log_data(self.model_optimizer.param_groups[1]['lr']), 
+            'lr/transform': self.parse_log_data(self.model_optimizer.param_groups[0]['lr'])
+        }
+
+        step_logpath = os.path.join(self.opt.log_root, self.opt.model_name, 'val', 'step_logs', f'{self.epoch}.pkl')
+        os.makedirs(os.path.dirname(step_logpath), exist_ok=True)
+        with open(step_logpath, 'wb') as f:
+            pickle.dump(step_info, f)
 
         with np.printoptions(precision=4, suppress=True):
             output = "Epoch: {} | Validation: Loss: {} mIOU: {} mAP: {}".format(self.epoch, loss["loss"], iou, mAP)

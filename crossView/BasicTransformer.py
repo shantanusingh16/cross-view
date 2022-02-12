@@ -48,7 +48,7 @@ class BasicTransformer(nn.Module):
 
         T = self.merge1(torch.cat((features, V), dim=1))  # Skip connection 1
         
-        front_res = self.mpl_head2(front_res)
+        front_res = self.mpl_head2(T)
 
         output = self.merge2(torch.cat((front_res, V), dim=1)) # Skip connection 2
         return output

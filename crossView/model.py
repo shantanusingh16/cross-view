@@ -155,7 +155,7 @@ class Encoder(nn.Module):
         x = self.resnet_encoder(x)[-1]
         x = self.pool(self.conv1(x))
         x = self.conv2(x)
-        x = self.pool(x)
+        # x = self.pool(x)
         return x
 
 class ChandrakarEncoder(nn.Module):

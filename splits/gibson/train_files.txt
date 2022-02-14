@@ -1,1 +1,1 @@
-splits/gibson/gibson_8fid_train.txt
+splits/gibson4/sample_front_train.txt

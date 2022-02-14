@@ -172,14 +172,14 @@ class Trainer:
             train_dataset,
             self.opt.batch_size,
             True,
-            num_workers=self.opt.num_workers,
+            num_workers=self.opt.train_workers,
             pin_memory=True,
             drop_last=True)
         self.val_loader = DataLoader(
             val_dataset,
             self.opt.batch_size,
             True,
-            num_workers=self.opt.num_workers,
+            num_workers=self.opt.val_workers,
             pin_memory=True,
             drop_last=True)
 
@@ -227,8 +227,8 @@ class Trainer:
         # transform_feature, retransform_features = self.models["CycledViewProjection"](features)
         # features = self.models["CrossViewTransformer"](features, transform_feature, retransform_features)
         
-        chandrakar_features = self.models["ChandrakarEncoder"](inputs["chandrakar_input"])
-        features = self.models["MergeMultimodal"](features,  chandrakar_features)
+        # chandrakar_features = self.models["ChandrakarEncoder"](inputs["chandrakar_input"])
+        # features = self.models["MergeMultimodal"](features,  chandrakar_features)
         x_feature = retransform_features = transform_feature = features
         features = self.models["BasicTransformer"](features)
 
@@ -249,7 +249,8 @@ class Trainer:
         #     transform_feature, retransform_features = self.models["CycledViewProjectionMultimodal"](features, chandrakar_features)
         #     features = self.models["CrossViewTransformer"](features, transform_feature, retransform_features)
 
-        # features = self.models["MergeMultimodal"](features,  chandrakar_features)
+        chandrakar_features = self.models["ChandrakarEncoder"](inputs["chandrakar_input"])
+        features = self.models["MergeMultimodal"](features,  chandrakar_features)
 
         outputs["topview"] = self.models["decoder"](features)
         outputs["transform_topview"] = self.models["transform_decoder"](transform_feature)

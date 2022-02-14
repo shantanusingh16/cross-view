@@ -73,8 +73,10 @@ def get_args():
                         help="Max number of training epochs")
     parser.add_argument("--log_frequency", type=int, default=5,
                         help="Log files every x epochs")
-    parser.add_argument("--num_workers", type=int, default=8,
-                        help="Number of cpu workers for dataloaders")
+    parser.add_argument("--train_workers", type=int, default=8,
+                        help="Number of cpu workers for train dataloader")
+    parser.add_argument("--val_workers", type=int, default=8,
+                        help="Number of cpu workers for val dataloader")
     parser.add_argument("--osm_path", type=str, default="./data/osm",
                         help="OSM path")
     parser.add_argument('--log_root', type=str, default=os.getcwd() + '/log')

@@ -127,4 +127,5 @@ class compute_losses(nn.Module):
         explored_ch = 1 - topview[:, 0]  # 1 - unknown
         pred = torch.unsqueeze(occ_ch, dim=1)
         gradient_pred = torch.linalg.norm(2 * ktf.spatial_gradient(pred), dim=2) * torch.unsqueeze(explored_ch, dim=1)
+        gradient_pred = torch.clamp(gradient_pred, min=0, max=1)
         return nn.BCELoss()(gradient_pred.squeeze(1), gt)

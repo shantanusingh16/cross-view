@@ -96,6 +96,32 @@ def mean_IU(eval_segm, gt_segm, n_cl):
     # print('IU', IU)
     return IU
 
+def compute_depth_errors(pred, gt, mask=None):
+    """Computation of error metrics between predicted and ground truth depths
+    """
+    if mask is None:
+        mask = np.ones_like(gt) == 1
+        
+    gt = gt[mask] + 1e-6
+    pred = pred[mask] + 1e-6
+        
+    thresh = np.maximum((gt / pred), (pred / gt))
+    a1 = (thresh < 1.25     ).mean()
+    a2 = (thresh < 1.25 ** 2).mean()
+    a3 = (thresh < 1.25 ** 3).mean()
+
+    rmse = (gt - pred) ** 2
+    rmse = np.sqrt(rmse.mean())
+
+    rmse_log = (np.log(gt) - np.log(pred)) ** 2
+    rmse_log = np.sqrt(rmse_log.mean())
+
+    abs_rel = np.mean(np.abs(gt - pred) / gt)
+
+    sq_rel = np.mean(((gt - pred) ** 2) / gt)
+
+    return abs_rel, sq_rel, rmse, rmse_log, a1, a2, a3
+
 
 '''
 Auxiliary functions used during evaluation.

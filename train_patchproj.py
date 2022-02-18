@@ -31,7 +31,7 @@ from opt import get_args
 import tqdm
 
 from losses import compute_losses
-from utils import mean_IU, mean_precision, normalize_image, invnormalize_imagenet
+from utils import mean_IU, mean_precision, normalize_image, invnormalize_imagenet, compute_depth_errors
 
 import pickle
 
@@ -79,13 +79,12 @@ class Trainer:
             self.set_seed()  # set seed
 
         # Initializing models
-        self.models["encoder"] = crossView.Encoder(18, self.opt.height, self.opt.width, True)
+        self.models["encoder"] = crossView.Encoder(18, self.opt.height, self.opt.width, pretrained=True, all_features=True)
         self.models["BasicTransformer"] = crossView.BasicTransformer(8, 128)
-        # self.models["BasicTransformer2"] = crossView.BasicTransformer2(8, 128)
         
         if self.opt.chandrakar_input_dir != "None":
             self.multimodal_input = True
-            self.models["ChandrakarEncoder"] = crossView.ChandrakarEncoder(2, [4,4,2,2], 16)
+            self.models["ChandrakarEncoder"] = crossView.ChandrakarEncoder(2, [4,4,4,2], 16)
             self.models["MergeMultimodal"] = crossView.MergeMultimodal(128, 2)
 
             # self.models["ChandrakarEncoder"] = crossView.ChandrakarEncoder(1, [2,2,2,2], 16)
@@ -96,10 +95,13 @@ class Trainer:
         # self.models['CycledViewProjection'] = crossView.CycledViewProjection(in_dim=8)
         # self.models["CrossViewTransformer"] = crossView.CrossViewTransformer(128)
 
-        self.models["decoder"] = crossView.Decoder(
-            self.models["encoder"].resnet_encoder.num_ch_enc, self.opt.num_class, self.opt.occ_map_size)
-        self.models["transform_decoder"] = crossView.Decoder(
-            self.models["encoder"].resnet_encoder.num_ch_enc, self.opt.num_class, self.opt.occ_map_size, "transform_decoder")
+        self.models["DepthDecoder"] = crossView.DepthDecoder(
+            self.models["encoder"].resnet_encoder.num_ch_enc, self.opt.height, self.opt.width)
+
+        # self.models["decoder"] = crossView.Decoder(
+        #     self.models["encoder"].resnet_encoder.num_ch_enc, self.opt.num_class, self.opt.occ_map_size)
+        # self.models["transform_decoder"] = crossView.Decoder(
+        #     self.models["encoder"].resnet_encoder.num_ch_enc, self.opt.num_class, self.opt.occ_map_size, "transform_decoder")
 
         for key in self.models.keys():
             self.models[key].to(self.device)
@@ -222,7 +224,7 @@ class Trainer:
             if key != "filename":
                 inputs[key] = input.to(self.device)
 
-        features = self.models["encoder"](inputs["color"])
+        enc_features = self.models["encoder"](inputs["color"])
         
         # x_feature = features
         # transform_feature, retransform_features = self.models["CycledViewProjection"](features)
@@ -230,12 +232,8 @@ class Trainer:
         
         # chandrakar_features = self.models["ChandrakarEncoder"](inputs["chandrakar_input"])
         # features = self.models["MergeMultimodal"](features,  chandrakar_features)
-        x_feature = retransform_features = transform_feature = features
-        features = self.models["BasicTransformer"](features)
-
-        # chandrakar_features = self.models["ChandrakarEncoder"](inputs["chandrakar_input"])
-        # features = self.models["BasicTransformer2"](chandrakar_features, features, chandrakar_features)
-        # x_feature = retransform_features = transform_feature = features
+        x_feature = retransform_features = transform_feature = enc_features[-1]
+        features = self.models["BasicTransformer"](x_feature)
 
         # if self.multimodal_input:
         #     chandrakar_features = self.models["ChandrakarEncoder"](inputs["chandrakar_input"])
@@ -254,13 +252,16 @@ class Trainer:
         #     transform_feature, retransform_features = self.models["CycledViewProjectionMultimodal"](features, chandrakar_features)
         #     features = self.models["CrossViewTransformer"](features, transform_feature, retransform_features)
 
-        chandrakar_features = self.models["ChandrakarEncoder"](inputs["chandrakar_input"])
-        features = self.models["MergeMultimodal"](features,  chandrakar_features)
+        # chandrakar_features = self.models["ChandrakarEncoder"](inputs["chandrakar_input"])
+        # features = self.models["MergeMultimodal"](features,  chandrakar_features)
 
-        outputs["topview"] = self.models["decoder"](features)
-        outputs["transform_topview"] = self.models["transform_decoder"](transform_feature)
+        # outputs["topview"] = self.models["decoder"](features)
+        # outputs["transform_topview"] = self.models["transform_decoder"](transform_feature)
         # if validation:
         #     return outputs
+        # losses = self.criterion(self.opt, self.weight, inputs, outputs, x_feature, retransform_features)
+
+        outputs["pred_depth"] = self.models["DepthDecoder"](features, enc_features)
         losses = self.criterion(self.opt, self.weight, inputs, outputs, x_feature, retransform_features)
 
         return outputs, losses
@@ -272,7 +273,7 @@ class Trainer:
             "topview_loss": 0.0,
             "transform_loss": 0.0,
             "transform_topview_loss": 0.0,
-            "boundary": 0.0,
+            "depth_loss": 0.0,
             "loss_discr": 0.0
         }
         accumulation_steps = 8
@@ -302,7 +303,7 @@ class Trainer:
             loss[loss_name] /= valid_batches
 
         if len(self.train_loader) > valid_batches:
-            print("NaN loss encountered in {} batches".format(len(self.train_loader) - valid_batches))
+            print("NaN loss encountered in {} batches".format(len(self.train_loader) * self.opt.batch_size - valid_batches))
             
         return loss
 
@@ -318,7 +319,7 @@ class Trainer:
             return val
 
     def validation(self, log):
-        iou, mAP = np.array([0.] * self.opt.num_class), np.array([0.] * self.opt.num_class)
+        depth_errors = np.array([0.] * 7)
         # trans_iou, trans_mAP = np.array([0.] * self.opt.num_class), np.array([0.] * self.opt.num_class)
 
         # Store scalars as pkl
@@ -329,7 +330,7 @@ class Trainer:
             "topview_loss": 0.0,
             "transform_loss": 0.0,
             "transform_topview_loss": 0.0,
-            "boundary": 0.0,
+            "depth_loss": 0.0,
             "loss_discr": 0.0
         }
         for batch_idx, inputs in tqdm.tqdm(enumerate(self.val_loader)):
@@ -339,14 +340,16 @@ class Trainer:
             for loss_name in losses:
                 loss[loss_name] += losses[loss_name].item()
 
-            pred = np.squeeze(
-                torch.argmax(
-                    outputs["topview"][:1].detach(),
-                    1).cpu().numpy())
-            true = np.squeeze(
-                inputs[self.opt.type + "_gt"][:1].detach().cpu().numpy())
-            iou += mean_IU(pred, true, self.opt.num_class)
-            mAP += mean_precision(pred, true, self.opt.num_class)
+            preds = np.squeeze(
+                torch.sigmoid(outputs["pred_depth"][-1]).detach()).cpu().numpy()
+
+            depth = inputs["depth_gt"]
+            min = torch.amin(depth, dim=[1,2], keepdim=True)
+            max = torch.amax(depth, dim=[1,2], keepdim=True)
+            tgt = (depth - min)/(max - min + 1e-6)
+            trues = np.squeeze(tgt.detach().cpu().numpy())
+
+            depth_errors += compute_depth_errors(preds, trues)
 
             if batch_idx >= 4:
                 continue
@@ -356,13 +359,13 @@ class Trainer:
             color = cv2.resize(color.numpy().transpose((1,2,0)), dsize=(128, 128)).transpose((2, 0, 1))
             self.writer.add_image(f"color_gt/{batch_idx}", color, self.epoch)
 
-            # BEV data
-            self.writer.add_image(f"bev_gt/{batch_idx}",
-                normalize_image(np.expand_dims(true, axis=0), (0, 2)), self.epoch)
+            # GT Depth data
+            self.writer.add_image(f"depth_gt/{batch_idx}",
+                normalize_image(np.expand_dims(trues[0], axis=0), (0, 1)), self.epoch)
 
-            # BEV data
-            self.writer.add_image(f"bev_pred/{batch_idx}",
-                normalize_image(np.expand_dims(pred, axis=0), (0, 2)), self.epoch)
+            # Pred Depth data
+            self.writer.add_image(f"pred_depth/{batch_idx}",
+                normalize_image(np.expand_dims(preds[0], axis=0), (0, 1)), self.epoch)
 
             if self.multimodal_input:            
                 # Chandrakar input data
@@ -385,17 +388,17 @@ class Trainer:
             self.writer.add_scalar(loss_name + '/val', loss[loss_name], global_step=self.epoch)
             step_info[loss_name] = self.parse_log_data(loss[loss_name])
 
-        iou /= len(self.val_loader)
-        mAP /= len(self.val_loader)
+        depth_errors /= (len(self.val_loader) * self.opt.batch_size)
 
-        mAP_cls =  dict(unknown=mAP[0], occupied=mAP[1], free=mAP[2])
-        mIOU_cls = dict(unknown=iou[0], occupied=iou[1], free=iou[2])
+        depth_err_dict =  dict(
+            abs_rel=depth_errors[0], sq_rel=depth_errors[1], \
+            rmse=depth_errors[2], rmse_log= depth_errors[3], \
+            a1=depth_errors[4], a2=depth_errors[5], a3=depth_errors[6]
+        )
         
-        self.writer.add_scalars("mAP_cls", mAP_cls, self.epoch)
-        self.writer.add_scalars("mIOU_cls", mIOU_cls, self.epoch)
+        self.writer.add_scalars("depth_errors", depth_err_dict, self.epoch)
 
-        step_info["mAP_cls"] = self.parse_log_data(mAP_cls)
-        step_info["mIOU_cls"] = self.parse_log_data(mIOU_cls)
+        step_info["depth_errors"] = self.parse_log_data(depth_err_dict)
         step_info["epoch"] = self.epoch
         step_info['learning_rate'] = {
             'base': self.parse_log_data(self.model_optimizer.param_groups[1]['lr']), 
@@ -408,7 +411,7 @@ class Trainer:
             pickle.dump(step_info, f)
 
         with np.printoptions(precision=4, suppress=True):
-            output = "Epoch: {} | Validation: Loss: {} mIOU: {} mAP: {}".format(self.epoch, loss["loss"], iou, mAP)
+            output = "Epoch: {} | Validation: Loss: {} a1: {} a2: {} a3: {}".format(self.epoch, loss["loss"], *depth_errors[4:])
             print(output)
             log.write(output + '\n')
             log.flush()

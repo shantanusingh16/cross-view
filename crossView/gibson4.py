@@ -28,6 +28,7 @@ import quaternion
 # from networks.occant_baselines.depthsensor import DepthProjector
 
 import albumentations as A
+import kornia.filters as ktf
 
 imagenet_stats = {'mean': [0.485, 0.456, 0.406],
                    'std': [0.229, 0.224, 0.225]}
@@ -250,6 +251,8 @@ class Gibson4Dataset(data.Dataset):
         bev_key = "static" if self.is_train else "static_gt"
         inputs[bev_key] = self.get_bev(folder, frame_index, camera_pose, do_flip)
 
+        inputs["boundary"] = self.get_boundary(folder, frame_index, camera_pose, do_flip)
+
         # Project Depth to BEV based on height thresholding. (For OccAnt Models)
         if os.path.exists(self.chandrakar_input_dir):
             ego_map_fn = self.read_ego_map_gt
@@ -334,7 +337,8 @@ class Gibson4Dataset(data.Dataset):
         if do_flip:
             depth = depth.transpose(pil.FLIP_LEFT_RIGHT)
 
-        depth = np.array(depth).astype(np.float32)/6553.5  # Nearest to maintain edge sharpness)
+        depth = np.array(depth).astype(np.float32)/6553.5  # Nearest to maintain edge sharpness
+        depth = np.clip(depth, a_min=0, a_max=10)
 
         return depth
 
@@ -414,7 +418,7 @@ class Gibson4Dataset(data.Dataset):
         # # ego_map[np.logical_or(bev==1, bev==2), 1]= 1 # Explored
 
         # Chandrakar depth
-        chandrakar_depth_path = os.path.join(folder, '0', 'pred_depth', str(frame_index) + ".png")
+        chandrakar_depth_path = os.path.join(folder, '0', camera_pose, 'pred_depth', str(frame_index) + ".png")
         depth = cv2.imread(chandrakar_depth_path, -1)
 
         if do_flip:
@@ -460,6 +464,57 @@ class Gibson4Dataset(data.Dataset):
         map_path = os.path.join(self.floor_path, map_file)
         osm = self.loader(map_path)
         return osm
+
+    def get_boundary(self, folder, frame_index, camera_pose, do_flip):
+
+        full_bev = cv2.imread(os.path.join(self.data_path, folder, '0', camera_pose, "map", str(frame_index) + ".png"), -1)
+        full_bev = full_bev[-64:, full_bev.shape[1]//2 - 32: full_bev.shape[1]//2 + 32]        
+        
+        partial_tv = cv2.imread(os.path.join(self.bev_dir, folder, camera_pose, "partial_occ", str(frame_index) + ".png"), -1)
+        partial_tv[partial_tv == 127] = 1
+        partial_tv[partial_tv == 255] = 2
+        partial_tv = partial_tv[-64:, partial_tv.shape[1]//2 - 32: partial_tv.shape[1]//2 + 32]
+
+        full_bev[partial_tv == 0] = 127 # Set unknown to occupied
+        
+        # Convert to partial occupancy format 127 - occupied, 255 - free
+        full_bev[full_bev == 255] = 127
+        full_bev[full_bev == 0] = 255
+
+        # print(np.unique(full_bev), "full after")
+        # print(np.unique(partial_tv), "partial")
+
+        # cv2.imwrite("partial_bev.png", np.fliplr(partial_tv) * 127)
+        # cv2.imwrite("full_bev.png", full_bev)
+        # exit()
+
+        resized_full_bev = cv2.resize(full_bev, (self.bev_width, self.bev_height), cv2.INTER_NEAREST)
+        resized_full_bev = torch.tensor(resized_full_bev, dtype=torch.int64)
+
+        resized_partial_tv = cv2.resize(partial_tv, (self.bev_width, self.bev_height), cv2.INTER_NEAREST)
+        resized_partial_tv = torch.tensor(resized_partial_tv, dtype=torch.int64)
+
+        occupied_map_full = torch.zeros_like(resized_full_bev, requires_grad=False)
+        occupied_map_full[resized_full_bev == 127] = 1
+
+        occupied_map_full_grad = ktf.spatial_gradient(occupied_map_full.unsqueeze(0).unsqueeze(0).float()) # Output: B, 1, 2, H, W
+        occupied_map_full_grad = torch.squeeze(occupied_map_full_grad, dim=1) # B, 2, H, W
+        occupied_map_full_grad = torch.linalg.norm(occupied_map_full_grad, dim=1) # B, H, W
+        occupied_map_full_grad = torch.nan_to_num(occupied_map_full_grad)
+
+        occupied_map_full_grad[occupied_map_full_grad > 0] = 1.0
+        # occupied_map_full_grad[resized_partial_tv.unsqueeze(0) == 0] = 0 # Set boundary to 0 when in unknown regions of partial occupancy
+
+        boundary = occupied_map_full_grad.squeeze().long()
+
+        if do_flip:
+            boundary = torch.fliplr(boundary)
+
+        # print(bev.shape)
+        # cv2.imwrite("boundary_bev.png", boundary.cpu().numpy() * 255)
+        # exit()
+
+        return boundary
 
 if __name__ == '__main__':
     opt = dict()

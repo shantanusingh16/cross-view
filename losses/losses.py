@@ -6,6 +6,7 @@ import torch.nn.functional as F
 import matplotlib.pyplot as PLT
 import numpy as np
 import cv2
+import kornia.filters as ktf
 
 
 def _gather_feat(feat, ind, mask=None):
@@ -49,6 +50,8 @@ class compute_transform_losses(nn.Module):
         return loss
 
 
+
+
 class compute_losses(nn.Module):
     def __init__(self, device='GPU'):
         super(compute_losses, self).__init__()
@@ -58,25 +61,42 @@ class compute_losses(nn.Module):
     def forward(self, opt, weight, inputs, outputs, features, retransform_features):
         losses = {}
         type = opt.type
-        losses["topview_loss"] = 0
-        losses["transform_topview_loss"] = 0
-        losses["transform_loss"] = 0
+        # losses["topview_loss"] = 0
+        # losses["transform_topview_loss"] = 0
+        # losses["transform_loss"] = 0
+        # losses["depth_loss"] = 0
 
         topview_key = 'static' if 'static' in inputs else 'static_gt'
 
-        losses["topview_loss"] = self.compute_topview_loss(
-            outputs["topview"],
-            inputs[topview_key],
-            weight[type])
-        losses["transform_topview_loss"] = self.compute_topview_loss(
-            outputs["transform_topview"],
-            inputs[topview_key],
-            weight[type])
+        if "topview" in outputs:
+            losses["topview_loss"] = self.compute_topview_loss(
+                outputs["topview"],
+                inputs[topview_key],
+                weight[type])
+
+        if "transform_topview" in outputs:
+            losses["transform_topview_loss"] = self.compute_topview_loss(
+                outputs["transform_topview"],
+                inputs[topview_key],
+                weight[type])
+
         losses["transform_loss"] = self.compute_transform_losses(
             features,
             retransform_features)
+
+        if "pred_depth" in outputs:
+            losses["depth_loss"] = self.compute_depth_losses(
+                outputs["pred_depth"],
+                inputs["depth_gt"])
+
+        if "boundary" in inputs:
+            losses["boundary"] = self.compute_boundary_loss(
+                outputs["topview"],
+                inputs["boundary"])
+
         # losses["loss"] = losses["topview_loss"] + 0.001 * losses["transform_loss"] + 1 * losses["transform_topview_loss"]
-        losses["loss"] = losses["topview_loss"]
+        losses["loss"] = losses["topview_loss"] # + 0.1*losses["boundary"]
+        # losses["loss"] = losses["depth_loss"]
 
         return losses
 
@@ -90,3 +110,21 @@ class compute_losses(nn.Module):
     def compute_transform_losses(self, outputs, retransform_output):
         loss = self.L1Loss(outputs, retransform_output)
         return loss
+
+    def compute_depth_losses(self, outputs, true_depth):
+        loss = 0
+        min = torch.amin(true_depth, dim=[1,2], keepdim=True)
+        max = torch.amax(true_depth, dim=[1,2], keepdim=True)
+        rel_depth = (true_depth - min)/(max - min + 1e-6)
+        for output in outputs:
+            loss += self.L1Loss(torch.squeeze(output, dim=1), rel_depth)
+        return loss
+
+    def compute_boundary_loss(self, topview, boundary):
+        gt = boundary.float()
+        topview = nn.Softmax2d()(topview)  #Convert to prob
+        occ_ch = topview[:, 1]
+        explored_ch = 1 - topview[:, 0]  # 1 - unknown
+        pred = torch.unsqueeze(occ_ch, dim=1)
+        gradient_pred = torch.linalg.norm(2 * ktf.spatial_gradient(pred), dim=2) * torch.unsqueeze(explored_ch, dim=1)
+        return nn.BCELoss()(gradient_pred.squeeze(1), gt)

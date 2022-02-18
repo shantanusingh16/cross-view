@@ -37,6 +37,36 @@ class down(nn.Module):
         x = self.mpconv(x)
         return x
 
+
+class up(nn.Module):
+    def __init__(self, in_ch, out_ch, bilinear=True):
+        super(up, self).__init__()
+
+        if bilinear:
+            self.up = nn.Upsample(scale_factor=2, mode="bilinear", align_corners=True)
+        else:
+            self.up = nn.ConvTranspose2d(in_ch // 2, in_ch // 2, 2, stride=2)
+
+        self.conv = double_conv(in_ch, out_ch)
+
+    def forward(self, x1, x2):
+        x1 = self.up(x1)
+
+        # input is CHW
+        diffY = x2.size()[2] - x1.size()[2]
+        diffX = x2.size()[3] - x1.size()[3]
+
+        x1 = F.pad(x1, (diffX // 2, diffX - diffX // 2, diffY // 2, diffY - diffY // 2))
+
+        # for padding issues, see
+        # https://github.com/HaiyongJiang/U-Net-Pytorch-Unstructured-Buggy/commit/0e854509c2cea854e247a9c615f175f76fbb2e3a
+        # https://github.com/xiaopeng-liao/Pytorch-UNet/commit/8ebac70e633bac59fc22bb5195e513d5832fb3bd
+
+        x = torch.cat([x2, x1], dim=1)
+        x = self.conv(x)
+        return x
+
+
 class MergeMultimodal(nn.Module):
     """
     Merges features from multiple modalities (say RGB, projected occupancy) into a single
@@ -125,7 +155,7 @@ class Encoder(nn.Module):
         Processes input image tensors into output feature tensors
     """
 
-    def __init__(self, num_layers, img_ht, img_wt, pretrained=True):
+    def __init__(self, num_layers, img_ht, img_wt, pretrained=True, all_features=False):
         super(Encoder, self).__init__()
 
         self.resnet_encoder = ResnetEncoder(num_layers, pretrained)
@@ -134,6 +164,7 @@ class Encoder(nn.Module):
         self.conv1 = Conv3x3(num_ch_enc[-1], 128)
         self.conv2 = Conv3x3(128, 128)
         self.pool = nn.MaxPool2d(2)
+        self.all_features = all_features
 
     def forward(self, x):
         """
@@ -150,13 +181,17 @@ class Encoder(nn.Module):
             Batch of low-dimensional image representations
             | Shape: (batch_size, 128, img_height/128, img_width/128)
         """
-
+        features = []
         batch_size, c, h, w = x.shape
-        x = self.resnet_encoder(x)[-1]
-        x = self.pool(self.conv1(x))
-        x = self.conv2(x)
-        # x = self.pool(x)
-        return x
+        features.extend(self.resnet_encoder(x))
+        features.append(self.pool(self.conv1(features[-1])))
+        features.append(self.conv2(features[-1]))
+        # features.append(self.pool(features[-1]))
+
+        if self.all_features:
+            return features
+
+        return features[-1]
 
 class ChandrakarEncoder(nn.Module):
     def __init__(self, n_channels, scales, nsf=16):

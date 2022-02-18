@@ -93,20 +93,22 @@ def test(args):
     models["encoder"].load_state_dict(filtered_dict_enc)
 
     CVP_path = os.path.join(args.model_path, "CycledViewProjection.pth")
-    CVP_dict = torch.load(CVP_path, map_location=device)
-    models['CycledViewProjection'] = CycledViewProjection(in_dim=8)
-    filtered_dict_cvp = {
-        k: v for k,
-        v in CVP_dict.items() if k in models["CycledViewProjection"].state_dict()}
-    models["CycledViewProjection"].load_state_dict(filtered_dict_cvp)
+    if os.path.exists(CVP_path):
+        CVP_dict = torch.load(CVP_path, map_location=device)
+        models['CycledViewProjection'] = CycledViewProjection(in_dim=8)
+        filtered_dict_cvp = {
+            k: v for k,
+            v in CVP_dict.items() if k in models["CycledViewProjection"].state_dict()}
+        models["CycledViewProjection"].load_state_dict(filtered_dict_cvp)
 
     CVT_path = os.path.join(args.model_path, "CrossViewTransformer.pth")
-    CVT_dict = torch.load(CVT_path, map_location=device)
-    models['CrossViewTransformer'] = CrossViewTransformer(128)
-    filtered_dict_cvt = {
-        k: v for k,
-        v in CVT_dict.items() if k in models["CrossViewTransformer"].state_dict()}
-    models["CrossViewTransformer"].load_state_dict(filtered_dict_cvt)
+    if os.path.exists(CVT_path):
+        CVT_dict = torch.load(CVT_path, map_location=device)
+        models['CrossViewTransformer'] = CrossViewTransformer(128)
+        filtered_dict_cvt = {
+            k: v for k,
+            v in CVT_dict.items() if k in models["CrossViewTransformer"].state_dict()}
+        models["CrossViewTransformer"].load_state_dict(filtered_dict_cvt)
 
     decoder_path = os.path.join(args.model_path, "decoder.pth")
     DEC_dict = torch.load(decoder_path, map_location=device)
@@ -125,6 +127,15 @@ def test(args):
         k: v for k,
         v in TRDEC_dict.items() if k in models["transform_decoder"].state_dict()}
     models["transform_decoder"].load_state_dict(filtered_dict_trdec)
+
+    base_transformer_path = os.path.join(args.model_path, "BasicTransformer.pth")
+    if os.path.exists(base_transformer_path):
+        bTR_dict = torch.load(base_transformer_path, map_location=device)
+        models["BasicTransformer"] = crossView.BasicTransformer(8, 128)
+        filtered_dict_btr = {
+            k: v for k,
+            v in bTR_dict.items() if k in models["BasicTransformer"].state_dict()}
+        models["BasicTransformer"].load_state_dict(filtered_dict_btr)
 
     chandrakar_encoder_path = os.path.join(args.model_path, "ChandrakarEncoder.pth")
     if os.path.exists(chandrakar_encoder_path):
@@ -158,7 +169,7 @@ def test(args):
         models[key].to(device)
         models[key].eval()
 
-    model_name = os.path.basename(os.path.dirname(os.path.dirname(args.model_path)))
+    model_name = os.path.basename(os.path.dirname(args.model_path))
 
     dataset_dict = {
         "3Dobject": crossView.KITTIObject,
@@ -186,7 +197,7 @@ def test(args):
             True,
             num_workers=args.num_workers,
             pin_memory=True,
-            drop_last=True)
+            drop_last=False)
 
     print("-> Predicting on {:d} test images".format(len(val_dataset)))
 
@@ -205,11 +216,11 @@ def test(args):
             # transform_feature, retransform_features = models["CycledViewProjection"](features)
             # features = models["CrossViewTransformer"](features, transform_feature, retransform_features)
 
-            # x_feature = retransform_features = transform_feature = features
+            x_feature = retransform_features = transform_feature = features
             features = models["BasicTransformer"](features)
 
             ###  MERGE CHANDRAKAR DEPTH AND RGB FEATURES
-            chandrakar_features = models["ChandrakarEncoder"](inputs["chandrakar_input"])
+            # chandrakar_features = models["ChandrakarEncoder"](inputs["chandrakar_input"])
             # features = models["MergeMultimodal"](features,  chandrakar_features)
 
             # Cross-view Transformation Module
@@ -231,18 +242,18 @@ def test(args):
             tv = models["decoder"](features)
             # outputs["transform_topview"] = self.models["transform_decoder"](transform_feature)
 
-            preds = np.squeeze(torch.argmax(tv.detach(), 1).cpu().numpy())
-            trues = np.squeeze(inputs[args.type + "_gt"].detach().cpu().numpy())
+            preds = torch.argmax(tv.detach(), 1).cpu().numpy()
+            trues = inputs[args.type + "_gt"].detach().cpu().numpy()
 
             # SAVE OUTPUT
-            for idx in range(args.batch_size):
+            for idx in range(preds.shape[0]):
                 pred = preds[idx]
                 true = trues[idx]
                 iou += mean_IU(pred, true, args.num_class)
                 mAP += mean_precision(pred, true, args.num_class)
 
-                folder, fileidx = inputs["filename"][idx].split()
-                output_path = os.path.join(args.out_dir, model_name, folder, "{}.png".format(fileidx))
+                folder, camera_pose, fileidx = inputs["filename"][idx].split()
+                output_path = os.path.join(args.out_dir, model_name, folder, camera_pose, f"{fileidx}.png")
                 os.makedirs(os.path.dirname(output_path), exist_ok=True)
                 true_top_view = pred.astype(np.uint8) * 127
                 cv2.imwrite(output_path, true_top_view)

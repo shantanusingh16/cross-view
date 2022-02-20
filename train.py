@@ -85,13 +85,18 @@ class Trainer:
         
         if self.opt.chandrakar_input_dir != "None":
             self.multimodal_input = True
-            self.models["ChandrakarEncoder"] = crossView.ChandrakarEncoder(2, [4,4,2,2], 16)
+            # self.models["ChandrakarEncoder"] = crossView.ChandrakarEncoder(2, [4,4,2,2], 16)
             self.models["MergeMultimodal"] = crossView.MergeMultimodal(128, 2)
 
             # self.models["ChandrakarEncoder"] = crossView.ChandrakarEncoder(1, [2,2,2,2], 16)
             # self.models['CycledViewProjectionMultimodal'] = crossView.CycledViewProjectionMultimodal(in_dim=8, in_channels=128)
+
+            self.models["ChandrakarEncoder"] = crossView.Encoder(18, self.opt.height, self.opt.width, False, False, 2)
         else:
             self.multimodal_input = False
+
+        # self.models["MergeMultimodal"] = crossView.MergeMultimodal(128, 2)
+        # self.models["DepthEncoder"] = crossView.Encoder(18, self.opt.height, self.opt.width, False, False, 1)
 
         # self.models['CycledViewProjection'] = crossView.CycledViewProjection(in_dim=8)
         # self.models["CrossViewTransformer"] = crossView.CrossViewTransformer(128)
@@ -227,10 +232,13 @@ class Trainer:
         # x_feature = features
         # transform_feature, retransform_features = self.models["CycledViewProjection"](features)
         # features = self.models["CrossViewTransformer"](features, transform_feature, retransform_features)
+
+        # depth_features = self.models["DepthEncoder"](inputs["depth_gt"])
+        # features = self.models["MergeMultimodal"](features,  depth_features)
         
         # chandrakar_features = self.models["ChandrakarEncoder"](inputs["chandrakar_input"])
         # features = self.models["MergeMultimodal"](features,  chandrakar_features)
-        x_feature = retransform_features = transform_feature = features
+        x_feature = retransform_features = transform_feature = features #= depth_features
         features = self.models["BasicTransformer"](features)
 
         # chandrakar_features = self.models["ChandrakarEncoder"](inputs["chandrakar_input"])
@@ -254,8 +262,8 @@ class Trainer:
         #     transform_feature, retransform_features = self.models["CycledViewProjectionMultimodal"](features, chandrakar_features)
         #     features = self.models["CrossViewTransformer"](features, transform_feature, retransform_features)
 
-        chandrakar_features = self.models["ChandrakarEncoder"](inputs["chandrakar_input"])
-        features = self.models["MergeMultimodal"](features,  chandrakar_features)
+        # chandrakar_features = self.models["ChandrakarEncoder"](inputs["chandrakar_input"])
+        # features = self.models["MergeMultimodal"](features,  chandrakar_features)
 
         outputs["topview"] = self.models["decoder"](features)
         outputs["transform_topview"] = self.models["transform_decoder"](transform_feature)
@@ -356,6 +364,12 @@ class Trainer:
             color = cv2.resize(color.numpy().transpose((1,2,0)), dsize=(128, 128)).transpose((2, 0, 1))
             self.writer.add_image(f"color_gt/{batch_idx}", color, self.epoch)
 
+            # DEPTH data
+            depth = inputs["depth_gt"][0].detach().cpu().squeeze(dim=0).numpy()
+            depth = np.expand_dims(cv2.resize(depth, dsize=(128, 128)), axis=0)
+            depth = (depth * 1.14) + 1.67
+            self.writer.add_image(f"depth/{batch_idx}", depth, self.epoch)
+
             # BEV data
             self.writer.add_image(f"bev_gt/{batch_idx}",
                 normalize_image(np.expand_dims(true, axis=0), (0, 2)), self.epoch)
@@ -369,6 +383,8 @@ class Trainer:
                 chandrakar_input = inputs["chandrakar_input"][0].detach().cpu()
                 # For chandrakar depth input
                 chandrakar_input = np.expand_dims(cv2.resize(chandrakar_input.numpy().transpose((1,2,0))[..., 1:], dsize=(128, 128)), axis=0) # Taking the second channel only for depth
+                chandrakar_input = (chandrakar_input * 1.14) + 1.67
+                
                 self.writer.add_image(f"chandrakar_input/{batch_idx}", chandrakar_input, self.epoch)
 
             if "semantics_gt" in inputs:

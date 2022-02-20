@@ -267,8 +267,10 @@ class Gibson4Dataset(data.Dataset):
             semantics =  np.expand_dims(self.get_semantics(folder, frame_index, camera_pose, do_flip), 0)
             inputs["semantics_gt"] = torch.from_numpy(semantics.astype(np.float32))
 
-        depth = torch.from_numpy(self.get_depth(folder, frame_index, camera_pose, do_flip))
-        inputs["depth_gt"] = depth
+        depth = torch.from_numpy(self.get_depth(folder, frame_index, camera_pose, do_flip)).unsqueeze(dim=0)
+        norm_depth = np.clip(depth, a_min=0, a_max=4)
+        norm_depth = (norm_depth - 1.67)/1.14  # mean - 1.67, var=1.14
+        inputs["depth_gt"] = norm_depth
 
         # adjusting intrinsics to match each scale in the pyramid
         inputs["K"] = torch.from_numpy(self.K)
@@ -403,32 +405,36 @@ class Gibson4Dataset(data.Dataset):
 
         # # Chandrakar bev
         # bev_path = os.path.join(folder, '0', camera_pose, 'pred_bev', str(frame_index) + ".png")
-        # bev = cv2.imread(bev_path, -1)
+        # bev = cv2.imread(bev_path, -1) // 127
 
         # if do_flip:
         #     bev = np.fliplr(bev)
         
         # # Single channel, 3-value map
-        # bev = bev.astype(np.float32) / 254
+        # bev = bev.astype(np.float32)
         # ego_map = bev.reshape((*bev.shape, 1))  
         
         # # 2 channel, 1-value map
-        # # ego_map = np.zeros((*bev.shape, 2), dtype=np.float32)
-        # # ego_map[bev == 1, 0] = 1  # Occupied 
-        # # ego_map[np.logical_or(bev==1, bev==2), 1]= 1 # Explored
+        # ego_map = np.zeros((*bev.shape, 2), dtype=np.float32)
+        # ego_map[bev == 1, 0] = 1  # Occupied 
+        # ego_map[np.logical_or(bev==1, bev==2), 1]= 1 # Explored
 
         # Chandrakar depth
         chandrakar_depth_path = os.path.join(folder, '0', camera_pose, 'pred_depth', str(frame_index) + ".png")
-        depth = cv2.imread(chandrakar_depth_path, -1)
+        depth = cv2.imread(chandrakar_depth_path, -1) / 6553.5  # [0-10]
 
         if do_flip:
             depth = np.fliplr(depth)
 
+
+        # Depth clipped and normalied
+        norm_depth = np.clip(depth, a_min=0, a_max=4)
+        norm_depth = (norm_depth - 1.67)/1.14  # mean - 1.67, var=1.14
+
         # Raw continous depth with a mask
-        depth = depth/6553.5
         ego_map = np.zeros((*depth.shape, 2), dtype=np.float32)
         ego_map[depth!=0, 0] = 1
-        ego_map[..., 1] = depth
+        ego_map[..., 1] = norm_depth
 
         # # Discretized depth 
         # num_channels = 128

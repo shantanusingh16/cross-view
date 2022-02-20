@@ -4,6 +4,7 @@ import numpy as np
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
+from torch.autograd import Variable
 from torch.nn.utils import spectral_norm
 
 from .ResnetEncoder import ResnetEncoder
@@ -155,10 +156,16 @@ class Encoder(nn.Module):
         Processes input image tensors into output feature tensors
     """
 
-    def __init__(self, num_layers, img_ht, img_wt, pretrained=True, all_features=False):
+    def __init__(self, num_layers, img_ht, img_wt, pretrained=True, all_features=False, in_channels=3):
         super(Encoder, self).__init__()
 
         self.resnet_encoder = ResnetEncoder(num_layers, pretrained)
+        if in_channels != 3:
+            weight1 = self.resnet_encoder.encoder.conv1.weight.clone()
+            new_first_layer = nn.Conv2d(in_channels, 64, kernel_size=(7, 7), stride=(2, 2), padding=(3, 3), bias=False).requires_grad_()
+            new_first_layer.weight[:,:min(3, in_channels),:,:].data[...] =  Variable(weight1[:,:min(3, in_channels),:,:], requires_grad=True)
+            self.resnet_encoder.encoder.conv1 = new_first_layer
+
         num_ch_enc = self.resnet_encoder.num_ch_enc
         # convolution to reduce depth and size of features before fc
         self.conv1 = Conv3x3(num_ch_enc[-1], 128)
@@ -210,6 +217,7 @@ class ChandrakarEncoder(nn.Module):
         x5 = self.down4(x4)  # (bs, nsf*8, ..., ...)
 
         return x5
+
 
 class Decoder(nn.Module):
     """ Encodes the Image into low-dimensional feature representation

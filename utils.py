@@ -23,11 +23,11 @@ def normalize_image(x, range=None):
     if range is not None and isinstance(range, (list, tuple)) and len(range) == 2:
         mi, ma = range
     else:
-        ma = float(x.max().cpu().data)
-        mi = float(x.min().cpu().data)
+        ma = float(x.max())
+        mi = float(x.min())
     d = ma - mi if ma != mi else 1e5
     if torch.is_tensor(x):
-        x = torch.clamp(x, mi, ma)
+        x = torch.clamp(x, mi.cpu().data, ma.cpu().data)
     else:
         x = np.clip(x, a_min=mi, a_max=ma)
     return (x - mi) / d

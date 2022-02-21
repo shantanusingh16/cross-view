@@ -39,7 +39,7 @@ class BasicTransformer2(nn.Module):
         
         m_batchsize, C, width, height = key_features.size()
         proj_query = self.query_conv(query_features).view(m_batchsize, -1, width * height)  # B x C x (N)
-        proj_key = self.key_conv(key_features).view(m_batchsize, -1, width * height).permute(0, 2, 1)  # B x C x (W*H)
+        proj_key = self.key_conv(key_features).view(m_batchsize, -1, width * height).permute(0, 2, 1)  # B x (W*H) x C
 
         # proj_query = proj_query/torch.linalg.norm(proj_query, ord=2, dim=-1, keepdim=True)
         # proj_key = proj_key/torch.linalg.norm(proj_key, ord=2, dim=-1, keepdim=True)
@@ -50,7 +50,7 @@ class BasicTransformer2(nn.Module):
 
         V = torch.bmm(energy, proj_value).permute(0, 2, 1).view(m_batchsize, -1, width, height)
 
-        T = self.merge1(torch.cat((features, V), dim=1))  # Skip connection 1
+        T = self.merge1(torch.cat((x_value, V), dim=1))  # Skip connection 1
         
         front_res = self.mlp_head(T)
 

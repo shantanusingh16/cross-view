@@ -80,8 +80,8 @@ class Trainer:
 
         # Initializing models
         self.models["encoder"] = crossView.Encoder(18, self.opt.height, self.opt.width, True)
-        self.models["BasicTransformer"] = crossView.BasicTransformer(8, 128)
-        # self.models["BasicTransformer2"] = crossView.BasicTransformer2(8, 128)
+        # self.models["BasicTransformer"] = crossView.BasicTransformer(8, 128)
+        self.models["BasicTransformer2"] = crossView.BasicTransformer2(8, 128)
         
         if self.opt.chandrakar_input_dir != "None":
             self.multimodal_input = True
@@ -102,7 +102,7 @@ class Trainer:
         # self.models["CrossViewTransformer"] = crossView.CrossViewTransformer(128)
 
         self.models["decoder"] = crossView.Decoder(
-            self.models["encoder"].resnet_encoder.num_ch_enc, self.opt.num_class, self.opt.occ_map_size)
+            self.models["encoder"].resnet_encoder.num_ch_enc, self.opt.num_class, self.opt.occ_map_size, in_features=256)
         self.models["transform_decoder"] = crossView.Decoder(
             self.models["encoder"].resnet_encoder.num_ch_enc, self.opt.num_class, self.opt.occ_map_size, "transform_decoder")
 
@@ -236,10 +236,10 @@ class Trainer:
         # depth_features = self.models["DepthEncoder"](inputs["depth_gt"])
         # features = self.models["MergeMultimodal"](features,  depth_features)
         
-        # chandrakar_features = self.models["ChandrakarEncoder"](inputs["chandrakar_input"])
+        chandrakar_features = self.models["ChandrakarEncoder"](inputs["chandrakar_input"])
         # features = self.models["MergeMultimodal"](features,  chandrakar_features)
-        x_feature = retransform_features = transform_feature = features #= depth_features
-        features = self.models["BasicTransformer"](features)
+        # x_feature = retransform_features = transform_feature = features #= depth_features
+        # features = self.models["BasicTransformer"](features)
 
         # chandrakar_features = self.models["ChandrakarEncoder"](inputs["chandrakar_input"])
         # features = self.models["BasicTransformer2"](chandrakar_features, features, chandrakar_features)
@@ -265,6 +265,11 @@ class Trainer:
         # chandrakar_features = self.models["ChandrakarEncoder"](inputs["chandrakar_input"])
         # features = self.models["MergeMultimodal"](features,  chandrakar_features)
 
+        x_feature = retransform_features = transform_feature = features #= depth_features
+        chandrakar_features = self.models["BasicTransformer2"](features, features, chandrakar_features)  # Based on RGB similarity, warp chandrakar to entire image.
+
+        features = torch.cat([features, chandrakar_features], dim=1)
+        
         outputs["topview"] = self.models["decoder"](features)
         outputs["transform_topview"] = self.models["transform_decoder"](transform_feature)
         # if validation:
@@ -368,7 +373,7 @@ class Trainer:
             depth = inputs["depth_gt"][0].detach().cpu().squeeze(dim=0).numpy()
             depth = np.expand_dims(cv2.resize(depth, dsize=(128, 128)), axis=0)
             depth = (depth * 1.14) + 1.67
-            self.writer.add_image(f"depth/{batch_idx}", depth, self.epoch)
+            self.writer.add_image(f"depth/{batch_idx}", normalize_image(depth), self.epoch)
 
             # BEV data
             self.writer.add_image(f"bev_gt/{batch_idx}",

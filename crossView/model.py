@@ -233,7 +233,7 @@ class Decoder(nn.Module):
         Processes input image features into output occupancy maps/layouts
     """
 
-    def __init__(self, num_ch_enc, num_class=2, occ_map_size=256, type=''):
+    def __init__(self, num_ch_enc, num_class=2, occ_map_size=256, type='', in_features=128):
         super(Decoder, self).__init__()
         self.num_output_channels = num_class
         self.occ_map_size = occ_map_size
@@ -245,9 +245,9 @@ class Decoder(nn.Module):
         for i in range(4, -1, -1):
             # upconv_0
             if type == 'transform_decoder':
-                num_ch_in = 128 if i == 4 else self.num_ch_dec[i + 1]
+                num_ch_in = in_features if i == 4 else self.num_ch_dec[i + 1]
             else:
-                num_ch_in = 128 if i == 4 else self.num_ch_dec[i + 1]
+                num_ch_in = in_features if i == 4 else self.num_ch_dec[i + 1]
             num_ch_out = self.num_ch_dec[i]
             self.convs[("upconv", i, 0)] = nn.Conv2d(
                 num_ch_in, num_ch_out, 3, 1, 1)

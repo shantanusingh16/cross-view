@@ -18,7 +18,14 @@ from easydict import EasyDict as edict
 import crossView
 
 from tqdm import tqdm
-from utils import mean_IU, mean_precision
+from utils import mean_IU, mean_precision, invnormalize_imagenet
+
+from pytorch_grad_cam import GradCAM
+from pytorch_grad_cam.utils.image import show_cam_on_image
+
+from crossView.pipelines.transformer import P_BasicTransformer
+
+from crossView.grad_cam import SegmentationModelOutputWrapper, SemanticSegmentationTarget
 
 
 def readlines(filename):
@@ -74,6 +81,7 @@ def get_args():
                         help="Mini-Batch size")
     parser.add_argument("--num_workers", type=int, default=8,
                         help="Number of cpu workers for dataloaders")
+    parser.add_argument('--grad_cam', type=bool, default=False)
 
     configs = edict(vars(parser.parse_args()))
     return configs
@@ -170,6 +178,8 @@ def test(args):
         models[key].to(device)
         models[key].eval()
 
+    pipeline = P_BasicTransformer(models=models, opt=args)
+
     model_name = os.path.basename(os.path.dirname(args.model_path))
 
     dataset_dict = {
@@ -211,14 +221,15 @@ def test(args):
                 if key != "filename":
                     inputs[key] = input.to(device)
 
+            rgb = inputs["color"]
             # PREDICTION
-            features = models["encoder"](inputs["color"])
+            # features = models["encoder"](inputs["color"])
         
             # transform_feature, retransform_features = models["CycledViewProjection"](features)
             # features = models["CrossViewTransformer"](features, transform_feature, retransform_features)
 
-            x_feature = retransform_features = transform_feature = features
-            features = models["BasicTransformer"](features)
+            # x_feature = retransform_features = transform_feature = features
+            # features = models["BasicTransformer"](features)
 
             ###  MERGE CHANDRAKAR DEPTH AND RGB FEATURES
             # chandrakar_features = models["ChandrakarEncoder"](inputs["chandrakar_input"])
@@ -240,8 +251,28 @@ def test(args):
             ### MERGE POST TRANSFORMED BEV FEATURES AND CHANDRAKAR BEV
             # features = models["MergeMultimodal"](features,  chandrakar_features)
 
-            tv = models["decoder"](features)
+            # tv = models["decoder"](features)
             # outputs["transform_topview"] = self.models["transform_decoder"](transform_feature)
+            outputs = {}
+            tv = pipeline.forward(inputs["color"])
+
+            if args.grad_cam == True:
+                with torch.enable_grad():
+                    wrapped_model = SegmentationModelOutputWrapper(pipeline)
+                    target_layers = pipeline.bottleneck
+                    for sem_idx, sem_class in enumerate(["unknown", "occupied", "free"]):
+                        with GradCAM(model=wrapped_model,
+                                    target_layers=target_layers,
+                                    use_cuda=torch.cuda.is_available()) as cam:
+                            grayscale_cam = cam(input_tensor=rgb, targets=[SemanticSegmentationTarget(sem_idx)])
+                            rgb_cam = []
+                            for idx in range(grayscale_cam.shape[0]):
+                                img = torch.clamp(invnormalize_imagenet(rgb[idx]), min=0, max=1).cpu().detach().numpy().transpose(1,2,0)
+                                rgb_cam.append(show_cam_on_image(img, grayscale_cam[idx], use_rgb=True))
+                            
+                            outputs[("rgb_cam", sem_class, 0)] = np.array(rgb_cam).transpose(0, 3, 1, 2)
+                            outputs[("grayscale_cam", sem_class, 0)] = np.expand_dims(grayscale_cam, axis=1)
+
 
             preds = torch.argmax(tv.detach(), 1).cpu().numpy()
             trues = inputs[args.type + "_gt"].detach().cpu().numpy()
@@ -258,6 +289,21 @@ def test(args):
                 os.makedirs(os.path.dirname(output_path), exist_ok=True)
                 true_top_view = pred.astype(np.uint8) * 127
                 cv2.imwrite(output_path, true_top_view)
+
+                if (("rgb_cam", "unknown", 0) in outputs):
+                    for sem_class in ["unknown", "occupied", "free"]:
+                        bev_dir = 'grad_rgb'
+                        img = outputs[("rgb_cam", sem_class, 0)][idx].transpose(1,2,0)
+                        outpath = os.path.join(args.out_dir, model_name, folder, camera_pose, bev_dir, '{}_{}.png'.format(sem_class, fileidx))
+                        os.makedirs(os.path.dirname(outpath), exist_ok=True)
+                        cv2.imwrite(outpath, img)
+
+                        bev_dir = 'grad_grayscale'
+                        img = outputs[("grayscale_cam", sem_class, 0)][idx].transpose(1,2,0)
+                        outpath = os.path.join(args.out_dir, model_name, folder, camera_pose, bev_dir, '{}_{}.png'.format(sem_class, fileidx))
+                        img = (img.squeeze() * 255).astype(np.uint8)
+                        os.makedirs(os.path.dirname(outpath), exist_ok=True)
+                        cv2.imwrite(outpath, img)
 
     iou = iou / len(val_dataset)
     mAP = mAP / len(val_dataset)

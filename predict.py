@@ -122,7 +122,7 @@ def test(args):
     transform_decoder_path = os.path.join(args.model_path, "transform_decoder.pth")
     TRDEC_dict = torch.load(transform_decoder_path, map_location=device)
     models["transform_decoder"] = model.Decoder(
-        models["encoder"].resnet_encoder.num_ch_enc, args.num_class, args.occ_map_size)
+        models["encoder"].resnet_encoder.num_ch_enc, args.num_class, args.occ_map_size, in_features=128)
     filtered_dict_trdec = {
         k: v for k,
         v in TRDEC_dict.items() if k in models["transform_decoder"].state_dict()}
@@ -140,8 +140,9 @@ def test(args):
     chandrakar_encoder_path = os.path.join(args.model_path, "ChandrakarEncoder.pth")
     if os.path.exists(chandrakar_encoder_path):
         CKENC_dict = torch.load(chandrakar_encoder_path, map_location=device)
-        models["ChandrakarEncoder"] = crossView.ChandrakarEncoder(2, [4,4,4,2], 16)
+        # models["ChandrakarEncoder"] = crossView.ChandrakarEncoder(2, [4,4,4,2], 16)
         # models["ChandrakarEncoder"] = crossView.ChandrakarEncoder(1, [2,2,2,2], 16)
+        models["ChandrakarEncoder"] = crossView.Encoder(18, feed_width, feed_height, False, False, 2)
         filtered_dict_ckenc = {
             k: v for k,
             v in CKENC_dict.items() if k in models["ChandrakarEncoder"].state_dict()}

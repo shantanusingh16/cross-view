@@ -176,9 +176,9 @@ class GibsonDataset(data.Dataset):
         # self.depth_projector = DepthProjector(self.opt)
 
         self.ego_map_transform = A.Compose([
-            A.Resize(height=self.height, width=self.width_ar, interpolation=cv2.INTER_NEAREST, always_apply=True), # If input is depth
-            A.CenterCrop(height=self.height, width=self.width, always_apply=True),
-            # A.Resize(height=self.bev_height, width=self.bev_width, interpolation=cv2.INTER_NEAREST, always_apply=True), # If input is bev
+            # A.Resize(height=self.height, width=self.width_ar, interpolation=cv2.INTER_NEAREST, always_apply=True), # If input is depth
+            # A.CenterCrop(height=self.height, width=self.width, always_apply=True),
+            A.Resize(height=self.bev_height, width=self.bev_width, interpolation=cv2.INTER_NEAREST, always_apply=True), # If input is bev
             # A.augmentations.CoarseDropout(max_holes=8, max_height=32, max_width=32, min_holes=4, min_height=16, min_width=16, p=0.5)
             # A.augmentations.geometric.ShiftScaleRotate(shift_limit=0, scale_limit=0, rotate_limit=30, \
             #     interpolation=cv2.INTER_NEAREST, border_mode=cv2.BORDER_CONSTANT, value=0, p=0.8)
@@ -416,35 +416,35 @@ class GibsonDataset(data.Dataset):
 
         folder = os.path.join(self.chandrakar_input_dir, folder)
 
-        # # Chandrakar bev
-        # bev_path = os.path.join(folder, '0', 'pred_bev', str(frame_index) + ".png")
-        # bev = cv2.imread(bev_path, -1)
+        # Chandrakar bev
+        bev_path = os.path.join(folder, '0', 'pred_bev', str(frame_index) + ".png")
+        bev = cv2.imread(bev_path, -1)
 
-        # if do_flip:
-        #     bev = np.fliplr(bev)
+        if do_flip:
+            bev = np.fliplr(bev)
         
-        # # Single channel, 3-value map
-        # bev = bev.astype(np.float32) / 254
-        # ego_map = bev.reshape((*bev.shape, 1))  
+        # Single channel, 3-value map
+        bev = bev.astype(np.float32) / 254
+        ego_map = bev.reshape((*bev.shape, 1))  
         
         # 2 channel, 1-value map
         # ego_map = np.zeros((*bev.shape, 2), dtype=np.float32)
         # ego_map[bev == 1, 0] = 1  # Occupied 
         # ego_map[np.logical_or(bev==1, bev==2), 1]= 1 # Explored
 
-        # Chandrakar depth
-        chandrakar_depth_path = os.path.join(folder, '0', 'pred_depth', str(frame_index) + ".png")
-        depth = cv2.imread(chandrakar_depth_path, -1)
+        # # Chandrakar depth
+        # chandrakar_depth_path = os.path.join(folder, '0', 'pred_depth', str(frame_index) + ".png")
+        # depth = cv2.imread(chandrakar_depth_path, -1)
 
-        if do_flip:
-            depth = np.fliplr(depth)
+        # if do_flip:
+        #     depth = np.fliplr(depth)
 
-        # Raw continous depth with a mask
-        depth = depth/6553.5
-        depth = np.clip(depth, a_min=0, a_max=10.0)
-        ego_map = np.zeros((*depth.shape, 2), dtype=np.float32)
-        ego_map[depth!=0, 0] = 1
-        ego_map[..., 1] = depth / 10
+        # # Raw continous depth with a mask
+        # depth = depth/6553.5
+        # depth = np.clip(depth, a_min=0, a_max=10.0)
+        # ego_map = np.zeros((*depth.shape, 2), dtype=np.float32)
+        # ego_map[depth!=0, 0] = 1
+        # ego_map[..., 1] = depth / 10
 
         # # Discretized depth 
         # num_channels = 128
@@ -461,6 +461,23 @@ class GibsonDataset(data.Dataset):
         # ego_map = np.zeros((*masked_depth.shape, 2), dtype=np.float32)
         # ego_map[masked_depth!=0, 0] = 1
         # ego_map[..., 0] = masked_depth
+
+
+        # # Fetch visible occ and manipulate channels to get occupied, free or explored only as input
+        # folder = os.path.join(self.chandrakar_input_dir, folder)
+
+        # # Visible occ bev
+        # bev_path = os.path.join(folder, '0', camera_pose, 'vo', str(frame_index) + ".png")
+        # bev = cv2.imread(bev_path, -1) // 127
+
+        # if do_flip:
+        #     bev = np.fliplr(bev)
+
+        # # 2 channel, 1-value map
+        # ego_map = np.zeros((*bev.shape, 1), dtype=np.float32)
+        # # ego_map[bev == 1, 0] = 1  # Occ only
+        # ego_map[bev == 2, 0] = 1  # Free only
+        # # ego_map[bev != 0, 0] = 1  # Explored only
 
         return ego_map
 

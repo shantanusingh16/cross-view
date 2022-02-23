@@ -67,6 +67,10 @@ def get_args():
                         help="dynamic weight for calculating loss")
     parser.add_argument("--occ_map_size", type=int, default=256,
                         help="size of topview occupancy map")
+    parser.add_argument("--cam_height", type=int, default=1,
+                        help="camera height from ground in metres")
+    parser.add_argument("--obstacle_height", type=int, default=1,
+                        help="obstacle height threshold from ground")
     parser.add_argument("--num_class", type=int, default=2,
                         help="Number of classes")
     parser.add_argument("--num_epochs", type=int, default=120,

@@ -95,6 +95,7 @@ def get_eval_args():
     parser = argparse.ArgumentParser(description="Evaluation options")
     parser.add_argument("--data_path", type=str, default="./data",
                         help="Path to the root data directory")
+    parser.add_argument("--bev_dir", type=str, help="Path to the bev directory (Only for habitat dataset)")
     parser.add_argument("--pretrained_path", type=str, default="./models/",
                         help="Path to the pretrained model")
     parser.add_argument("--osm_path", type=str, default="./data/osm",

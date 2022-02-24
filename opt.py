@@ -107,7 +107,7 @@ def get_eval_args():
             "3Dobject",
             "odometry",
             "raw",
-            "gibson"],
+            "gibson4"],
         help="Data split for training/validation")
     parser.add_argument("--ext", type=str, default="png",
                         help="File extension of the images")

@@ -57,7 +57,8 @@ def evaluate():
     models = {}
     models["encoder"] = crossView.Encoder(18, opt.height, opt.width, True)
     # models['CycledViewProjection'] = crossView.CycledViewProjection(in_dim=8)
-    models["CrossViewTransformer"] = crossView.CrossViewTransformer(128)
+    # models["CrossViewTransformer"] = crossView.CrossViewTransformer(128)
+    models["BasicTransformer"] = crossView.MultiheadAttention(None, 128, 4, 32)
 
     models["decoder"] = crossView.Decoder(
         models["encoder"].resnet_encoder.num_ch_enc, opt.num_class)
@@ -84,6 +85,7 @@ def evaluate():
         "splits",
         opt.split,
         "front_{}_files.txt")
+    print(fpath.format("val"), dataset)
     test_filenames = readlines(fpath.format("val"))
     test_dataset = dataset(opt, test_filenames, is_train=False)
     test_loader = DataLoader(
@@ -139,7 +141,7 @@ def process_batch(opt, models, inputs):
 
     # Cross-view Transformation Module
     # transform_feature, retransform_features = models["CycledViewProjection"](features)
-    features = models["CrossViewTransformer"](features, features, features)
+    features = models["BasicTransformer"](features, features, features)
 
     outputs["topview"] = models["decoder"](features)
     # outputs["transform_topview"] = models["transform_decoder"](transform_feature)

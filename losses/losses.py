@@ -58,7 +58,7 @@ class compute_losses(nn.Module):
         self.device = device
         self.L1Loss = nn.L1Loss()
 
-    def forward(self, opt, weight, inputs, outputs, features, retransform_features):
+    def forward(self, opt, weight, inputs, outputs, features=None):
         losses = {}
         type = opt.type
         # losses["topview_loss"] = 0
@@ -80,9 +80,9 @@ class compute_losses(nn.Module):
                 inputs[topview_key],
                 weight[type])
 
-        losses["transform_loss"] = self.compute_transform_losses(
-            features,
-            retransform_features)
+        # losses["transform_loss"] = self.compute_transform_losses(
+        #     features,
+        #     retransform_features)
 
         if "pred_depth" in outputs:
             losses["depth_loss"] = self.compute_depth_losses(
@@ -95,7 +95,7 @@ class compute_losses(nn.Module):
                 inputs["boundary"])
 
         # losses["loss"] = losses["topview_loss"] + 0.001 * losses["transform_loss"] + 1 * losses["transform_topview_loss"]
-        losses["loss"] = losses["topview_loss"] # + 0.1*losses["boundary"]
+        # losses["loss"] = losses["topview_loss"] # + 0.1*losses["boundary"]
         # losses["loss"] = losses["depth_loss"]
 
         return losses

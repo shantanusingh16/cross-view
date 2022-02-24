@@ -119,7 +119,7 @@ class Gibson4Dataset(data.Dataset):
             "occ_map_size", "floor_path"]
         
         for k in self.dataset_keys:
-            setattr(self, k, self.opt.get(k, None))
+            setattr(self, k, self.opt.get(k, "/ada"))
 
         assert self.data_path is not None
 
@@ -144,6 +144,7 @@ class Gibson4Dataset(data.Dataset):
         self.width_ar = (full_res_shape[0] * self.height) // full_res_shape[1]
         self.focal_length = focal_length * self.width_ar / full_res_shape[0]  # Scaling based on given input shape
 
+        print(self.height, self.width_ar)
         self.resize = transforms.Resize((self.height, self.width_ar), interpolation=self.interp)
 
         self.bev_width = self.occ_map_size

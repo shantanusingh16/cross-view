@@ -97,6 +97,8 @@ class compute_losses(nn.Module):
         # losses["loss"] = losses["topview_loss"] + 0.001 * losses["transform_loss"] + 1 * losses["transform_topview_loss"]
         # losses["loss"] = losses["topview_loss"] # + 0.1*losses["boundary"]
         # losses["loss"] = losses["depth_loss"]
+        losses["loss"] = losses["topview_loss"]
+
 
         return losses
 

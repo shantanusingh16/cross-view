@@ -152,6 +152,20 @@ class Trainer:
 
         self.patch = (1, self.opt.occ_map_size // 2**4, self.opt.occ_map_size // 2**4)
 
+        self.valid = Variable(
+            torch.Tensor(
+                np.ones(
+                    (self.opt.batch_size,
+                     *self.patch))),
+            requires_grad=False).float().cuda()
+        self.fake = Variable(
+            torch.Tensor(
+                np.zeros(
+                    (self.opt.batch_size,
+                     *self.patch))),
+            requires_grad=False).float().cuda()
+
+
         # Data Loaders
         dataset_dict = {
             "3Dobject": crossView.KITTIObject,
@@ -248,7 +262,7 @@ class Trainer:
         b, c, h, w = features.shape
         features = (features.reshape(b, c, -1) + self.pos_emb1D[:, :, :h*w].to(self.device)).reshape(b, c, h, w)
         
-        features = self.models["BasicTransformer"](features)        
+        features = self.models["BasicTransformer"](features, features, features)        
         outputs["topview"] = self.models["decoder"](features)
 
         losses = self.criterion(self.opt, self.weight, inputs, outputs)
@@ -270,12 +284,18 @@ class Trainer:
             outputs, losses = self.process_batch(inputs)
             self.model_optimizer.zero_grad()
 
+            target_bev = torch.zeros_like(outputs["topview"], device=outputs["topview"].device,
+                        dtype=torch.float32, requires_grad=False)
+            target_bev[:, 0, ...] = (inputs["static"] == 0) * 1.0
+            target_bev[:, 1, ...] = (inputs["static"] == 1) * 1.0
+            target_bev[:, 2, ...] = (inputs["static"] == 2) * 1.0
+
             fake_pred = self.models["discriminator"](outputs["topview"])
-            real_pred = self.models["discriminator"](inputs["static"])
+            real_pred = self.models["discriminator"](target_bev)
             loss_GAN = self.criterion_d(fake_pred.clone(), self.valid) + self.criterion_d(real_pred.clone(), self.valid)
             loss_D = self.criterion_d(fake_pred.clone(), self.fake) + self.criterion_d(real_pred.clone(), self.valid)
 
-            loss_G = self.opt.lambda_D * loss_GAN + losses["loss"]
+            loss_G = 0.01 * loss_GAN + losses["topview_loss"]
 
             if torch.isnan(losses["loss"]) or torch.isinf(losses["loss"]):
                 self.log.write("NaN loss at Epoch: %d Batch_idx: %d Filenames: %s \n" % (self.epoch, batch_idx, ",".join(inputs["filename"])))
@@ -284,14 +304,14 @@ class Trainer:
 
             valid_batches += 1
 
-            if self.epoch > self.opt.discr_train_epoch: 
+            if self.epoch >= 0: 
                 loss_D.backward(retain_graph=True)
                 loss_G.backward()
 
                 self.model_optimizer.step()
                 self.model_optimizer_D.step()
             else:
-                losses["loss"].backward()
+                losses["topview_loss"].backward()
                 self.model_optimizer.step()
 
             # if ((batch_idx + 1) % accumulation_steps) == 0:

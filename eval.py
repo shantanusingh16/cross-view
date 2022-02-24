@@ -1,4 +1,5 @@
 import argparse
+from audioop import cross
 import os
 
 import crossView
@@ -55,13 +56,13 @@ def evaluate():
     # Loading Pretarined Model
     models = {}
     models["encoder"] = crossView.Encoder(18, opt.height, opt.width, True)
-    models['CycledViewProjection'] = crossView.CycledViewProjection(in_dim=8)
+    # models['CycledViewProjection'] = crossView.CycledViewProjection(in_dim=8)
     models["CrossViewTransformer"] = crossView.CrossViewTransformer(128)
 
     models["decoder"] = crossView.Decoder(
         models["encoder"].resnet_encoder.num_ch_enc, opt.num_class)
-    models["transform_decoder"] = crossView.Decoder(
-        models["encoder"].resnet_encoder.num_ch_enc, opt.num_class, "transform_decoder")
+    # models["transform_decoder"] = crossView.Decoder(
+    #     models["encoder"].resnet_encoder.num_ch_enc, opt.num_class, "transform_decoder")
 
     for key in models.keys():
         models[key].to("cuda")
@@ -74,14 +75,15 @@ def evaluate():
     dataset_dict = {"3Dobject": crossView.KITTIObject,
                     "odometry": crossView.KITTIOdometry,
                     "argo": crossView.Argoverse,
-                    "raw": crossView.KITTIRAW}
+                    "raw": crossView.KITTIRAW,
+                    "gibson4": crossView.Gibson4Dataset}
 
     dataset = dataset_dict[opt.split]
     fpath = os.path.join(
         os.path.dirname(__file__),
         "splits",
         opt.split,
-        "{}_files.txt")
+        "front_{}_files.txt")
     test_filenames = readlines(fpath.format("val"))
     test_dataset = dataset(opt, test_filenames, is_train=False)
     test_loader = DataLoader(
@@ -136,11 +138,11 @@ def process_batch(opt, models, inputs):
     features = models["encoder"](inputs["color"])
 
     # Cross-view Transformation Module
-    transform_feature, retransform_features = models["CycledViewProjection"](features)
-    features = models["CrossViewTransformer"](features, transform_feature, retransform_features)
+    # transform_feature, retransform_features = models["CycledViewProjection"](features)
+    features = models["CrossViewTransformer"](features, features, features)
 
     outputs["topview"] = models["decoder"](features)
-    outputs["transform_topview"] = models["transform_decoder"](transform_feature)
+    # outputs["transform_topview"] = models["transform_decoder"](transform_feature)
 
     return outputs
 
@@ -148,7 +150,9 @@ def process_batch(opt, models, inputs):
 def save_topview(idx, tv, name_dest_im):
     tv_np = tv.squeeze().cpu().numpy()
     true_top_view = np.zeros((tv_np.shape[1], tv_np.shape[2]))
-    true_top_view[tv_np[1] > tv_np[0]] = 255
+    true_top_view[tv_np[1] > tv_np[0]] = 127
+    true_top_view[tv_np[2] > tv_np[0]] = 254
+    
     dir_name = os.path.dirname(name_dest_im)
     if not os.path.exists(dir_name):
         os.makedirs(dir_name)

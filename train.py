@@ -150,6 +150,11 @@ class Trainer:
         self.scheduler = MultiStepLR(self.model_optimizer, milestones=self.opt.lr_steps, gamma=0.1)
         # self.scheduler = CosineAnnealingLR(self.model_optimizer, T_max=15)  # iou 35.55
 
+        self.model_optimizer_D = optim.Adam(
+            self.parameters_to_train_D, self.opt.lr)
+        self.model_lr_scheduler_D = optim.lr_scheduler.StepLR(
+            self.model_optimizer_D, self.opt.scheduler_step_size, 0.1)
+
         self.patch = (1, self.opt.occ_map_size // 2**4, self.opt.occ_map_size // 2**4)
 
         self.valid = Variable(

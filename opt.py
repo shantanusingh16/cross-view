@@ -112,9 +112,9 @@ def get_eval_args():
         help="Data split for training/validation")
     parser.add_argument("--ext", type=str, default="png",
                         help="File extension of the images")
-    parser.add_argument("--height", type=int, default=1024,
+    parser.add_argument("--height", type=int, default=512,
                         help="Image height")
-    parser.add_argument("--width", type=int, default=1024,
+    parser.add_argument("--width", type=int, default=512,
                         help="Image width")
     parser.add_argument(
         "--type",

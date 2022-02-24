@@ -61,10 +61,11 @@ def evaluate():
     models["BasicTransformer"] = crossView.MultiheadAttention(None, 128, 4, 32)
 
     models["decoder"] = crossView.Decoder(
-        models["encoder"].resnet_encoder.num_ch_enc, opt.num_class)
+        models["encoder"].resnet_encoder.num_ch_enc, opt.num_class, opt.occ_map_size, in_features=128)
     # models["transform_decoder"] = crossView.Decoder(
     #     models["encoder"].resnet_encoder.num_ch_enc, opt.num_class, "transform_decoder")
 
+    pos = torch.nn.Parameter(torch.randn(1, 128, 64), requires_grad=True)
     for key in models.keys():
         models[key].to("cuda")
 
@@ -96,11 +97,10 @@ def evaluate():
         pin_memory=True,
         drop_last=True)
 
-    iou, mAP = np.array([0., 0.]), np.array([0., 0.])
-    trans_iou, trans_mAP = np.array([0., 0.]), np.array([0., 0.])
+    iou, mAP = np.array([0., 0., 0.]), np.array([0., 0., 0.])
     for batch_idx, inputs in tqdm.tqdm(enumerate(test_loader)):
         with torch.no_grad():
-            outputs = process_batch(opt, models, inputs)
+            outputs = process_batch(opt, models, inputs, pos)
         save_topview(
             inputs["filename"],
             outputs["topview"],
@@ -112,25 +112,17 @@ def evaluate():
             torch.argmax(
                 outputs["topview"].detach(),
                 1).cpu().numpy())
-        trans_pred = np.squeeze(
-            torch.argmax(
-                outputs["transform_topview"].detach(),
-                1).cpu().numpy())
         true = np.squeeze(inputs[opt.type + "_gt"].detach().cpu().numpy())
-        iou += mean_IU(pred, true)
-        mAP += mean_precision(pred, true)
-        trans_iou += mean_IU(trans_pred, true)
-        trans_mAP += mean_precision(trans_pred, true)
+        iou += mean_IU(pred, true, 3)
+        mAP += mean_precision(pred, true, 3)
+    
     iou /= len(test_loader)
     mAP /= len(test_loader)
-
-    trans_iou /= len(test_loader)
-    trans_mAP /= len(test_loader)
 
     print("Evaluation Results: mIOU: %.4f mAP: %.4f" % (iou[1], mAP[1]))
 
 
-def process_batch(opt, models, inputs):
+def process_batch(opt, models, inputs, pos=None):
     outputs = {}
     # print(inputs["filename"])
     for key, input_ in inputs.items():
@@ -139,12 +131,12 @@ def process_batch(opt, models, inputs):
 
     features = models["encoder"](inputs["color"])
 
-    # Cross-view Transformation Module
-    # transform_feature, retransform_features = models["CycledViewProjection"](features)
+    b, c, h, w = features.shape
+    features = (features.reshape(b, c, -1) + pos[:, :, :h*w].to('cuda')).reshape(b, c, h, w)
+
     features = models["BasicTransformer"](features, features, features)
 
     outputs["topview"] = models["decoder"](features)
-    # outputs["transform_topview"] = models["transform_decoder"](transform_feature)
 
     return outputs
 

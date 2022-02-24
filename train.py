@@ -270,6 +270,9 @@ class Trainer:
         features = self.models["BasicTransformer"](features, features, features)        
         outputs["topview"] = self.models["decoder"](features)
 
+        print(features.shape, outputs["topview"].shape)
+
+
         losses = self.criterion(self.opt, self.weight, inputs, outputs)
         return outputs, losses
 

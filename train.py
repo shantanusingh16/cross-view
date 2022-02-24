@@ -186,7 +186,7 @@ class Trainer:
             os.path.dirname(__file__),
             "splits",
             self.opt.split,
-            "{}_files.txt")
+            "front_{}_files.txt")
 
         train_filenames = readlines(fpath.format("train"))
         val_filenames = readlines(fpath.format("val"))

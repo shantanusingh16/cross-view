@@ -1,4 +1,4 @@
-CUDA_VISIBLE_DEVICES=2 python3 train.py --model_name transformer_discr --data_path \
+CUDA_VISIBLE_DEVICES=2 python3 train.py --model_name attention_transformer_discr --data_path \
 /scratch/shantanu/gibson4/new --split gibson4 --width 512 --height 512 --num_class 3 --type static \
 --static_weight 1 --occ_map_size 128 --log_frequency 1 --log_root /scratch/jaidev/basic_discr \
 --save_path /scratch/jaidev/basic_discr --semantics_dir None --chandrakar_input_dir None \

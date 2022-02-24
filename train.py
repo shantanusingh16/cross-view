@@ -91,7 +91,7 @@ class Trainer:
         # self.models["BasicTransformer"] = crossView.BasicTransformer(8, 128)
         # self.models["BasicTransformer2"] = crossView.BasicTransformer2(8, 128)
         self.models["BasicTransformer"] = crossView.MultiheadAttention(None, 128, 4, 32)
-        self.models["discriminator"] = crossView.Discriminator()
+        self.models["discriminator"] = crossView.DiscriminatorAttention()
 
         # if self.opt.chandrakar_input_dir != "None":
         #     self.multimodal_input = True
@@ -201,14 +201,14 @@ class Trainer:
             self.opt.batch_size,
             True,
             num_workers=self.opt.train_workers,
-            pin_memory=True,
+            pin_memory=False,
             drop_last=True)
         self.val_loader = DataLoader(
             val_dataset,
             self.opt.batch_size,
             True,
             num_workers=self.opt.val_workers,
-            pin_memory=True,
+            pin_memory=False,
             drop_last=True)
 
         if self.opt.load_weights_folder != "":
@@ -269,9 +269,6 @@ class Trainer:
         
         features = self.models["BasicTransformer"](features, features, features)        
         outputs["topview"] = self.models["decoder"](features)
-
-        print(features.shape, outputs["topview"].shape)
-
 
         losses = self.criterion(self.opt, self.weight, inputs, outputs)
         return outputs, losses

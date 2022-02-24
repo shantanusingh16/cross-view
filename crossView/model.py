@@ -351,7 +351,7 @@ class DiscriminatorAttention(nn.Module):
     in order to produce layouts close to the true data distribution
     """
     def __init__(self):
-        super(Discriminator, self).__init__()
+        super(DiscriminatorAttention, self).__init__()
         self.main = nn.Sequential(
             # input is (nc) x 64 x 64
             nn.Conv2d(3, 8, 3, 2, 1, 1, bias=False),
@@ -395,7 +395,7 @@ class DiscriminatorAttention(nn.Module):
         """
 
         feat = self.main(x)
-        feat = self.attention(feat)
+        feat = self.attention(feat, feat, feat)
         out = self.main2(feat)
 
         return out

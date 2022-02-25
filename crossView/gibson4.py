@@ -94,6 +94,7 @@ def img_to_lid(depth_map, cam_mat, label=None):
 
 def process_topview(topview, w, h):
     topview = topview.crop((32, 64, 96, 128)) # To crop out the bottom center 3.2x3.2 m map from 6.4x6.4m map
+    # topview = topview.crop((13, 27, 115, 128))  # To crop out the bottom center 5.05x5.05 m map from 6.4x6.4m map
     topview = topview.resize((w, h), pil.NEAREST)
     topview = np.array(topview)
     return topview
@@ -149,6 +150,7 @@ class Gibson4Dataset(data.Dataset):
         self.bev_width = self.occ_map_size
         self.bev_height = self.occ_map_size
         self.bev_res = 3.2 / self.occ_map_size
+        # self.bev_res = 5.05 / self.occ_map_size
 
         # Since we are cropping, the field of view changes, but the focal length remains the same.
         # The cropping is equal on both sides, so (cx, cy) are always at image center.
@@ -474,12 +476,14 @@ class Gibson4Dataset(data.Dataset):
     def get_boundary(self, folder, frame_index, camera_pose, do_flip):
 
         full_bev = cv2.imread(os.path.join(self.data_path, folder, '0', camera_pose, "map", str(frame_index) + ".png"), -1)
-        full_bev = full_bev[-64:, full_bev.shape[1]//2 - 32: full_bev.shape[1]//2 + 32]        
+        full_bev = full_bev[-64:, full_bev.shape[1]//2 - 32: full_bev.shape[1]//2 + 32]
+        # full_bev = full_bev[-101:, full_bev.shape[1]//2 - 51: full_bev.shape[1]//2 + 51]        
         
         partial_tv = cv2.imread(os.path.join(self.bev_dir, folder, camera_pose, "partial_occ", str(frame_index) + ".png"), -1)
         partial_tv[partial_tv == 127] = 1
         partial_tv[partial_tv == 255] = 2
         partial_tv = partial_tv[-64:, partial_tv.shape[1]//2 - 32: partial_tv.shape[1]//2 + 32]
+        # partial_tv = partial_tv[-101:, partial_tv.shape[1]//2 - 51: partial_tv.shape[1]//2 + 51]
 
         full_bev[partial_tv == 0] = 127 # Set unknown to occupied
         

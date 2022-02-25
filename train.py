@@ -57,7 +57,7 @@ def readlines(filename):
 class Trainer:
     def __init__(self):
         self.opt = get_args()
-        self.models = {}
+        # self.models = {}
         self.weight = {"static": self.opt.static_weight, "dynamic": self.opt.dynamic_weight}
         self.seed = self.opt.global_seed
         self.device = "cuda"
@@ -90,27 +90,27 @@ class Trainer:
         # self.pos_emb1D = torch.nn.Parameter(torch.randn(1, 128, 64), requires_grad=True)
         # self.base_parameters_to_train.append(self.pos_emb1D)
 
-        self.models["encoder"] = crossView.Encoder(18, self.opt.height, self.opt.width, True)
+        # self.models["encoder"] = crossView.Encoder(18, self.opt.height, self.opt.width, True)
         # self.models["BasicTransformer"] = crossView.BasicTransformer(8, 128)
         # self.models["BasicTransformer2"] = crossView.BasicTransformer2(8, 128)
         # self.models["BasicTransformer"] = crossView.MultiheadAttention(None, 128, 4, 32)
         
         
-        if self.opt.chandrakar_input_dir != "None":
-            self.multimodal_input = True
-            # self.models["ChandrakarEncoder"] = crossView.ChandrakarEncoder(2, [4,4,2,2], 16)
+        # if self.opt.chandrakar_input_dir != "None":
+        #     self.multimodal_input = True
+        #     # self.models["ChandrakarEncoder"] = crossView.ChandrakarEncoder(2, [4,4,2,2], 16)
 
-            # self.models["ChandrakarEncoder"] = crossView.ChandrakarEncoder(1, [2,2,2,2], 16)
-            # self.models['CycledViewProjectionMultimodal'] = crossView.CycledViewProjectionMultimodal(in_dim=8, in_channels=128)
+        #     # self.models["ChandrakarEncoder"] = crossView.ChandrakarEncoder(1, [2,2,2,2], 16)
+        #     # self.models['CycledViewProjectionMultimodal'] = crossView.CycledViewProjectionMultimodal(in_dim=8, in_channels=128)
 
-            self.models["ChandrakarEncoder"] = crossView.Encoder(18, self.opt.height, self.opt.width, False, False, 2)
+        #     self.models["ChandrakarEncoder"] = crossView.Encoder(18, self.opt.height, self.opt.width, False, False, 2)
 
-            # To project the chandrakar features from 1 ch to 128 ch (same as resnet dim)
-            # lambda x: rearrange(x, "b c (x p_x) (y p_y) -> b (p_x p_y c) x y", p_x=patch_size, p_y=patch_size)
-            # self.models["ChandrakarEncoder"] = crossView.ChandrakarEncoder(1, [2,2,1,1], 16)
-            # self.models["ChandrakarAttn"] = crossView.MultiheadAttention(None, 128, 4, 32)
-        else:
-            self.multimodal_input = False
+        #     # To project the chandrakar features from 1 ch to 128 ch (same as resnet dim)
+        #     # lambda x: rearrange(x, "b c (x p_x) (y p_y) -> b (p_x p_y c) x y", p_x=patch_size, p_y=patch_size)
+        #     # self.models["ChandrakarEncoder"] = crossView.ChandrakarEncoder(1, [2,2,1,1], 16)
+        #     # self.models["ChandrakarAttn"] = crossView.MultiheadAttention(None, 128, 4, 32)
+        # else:
+        #     self.multimodal_input = False
 
         # self.models["MergeMultimodal"] = crossView.MergeMultimodal(128, 2)
         # self.models["DepthEncoder"] = crossView.Encoder(18, self.opt.height, self.opt.width, False, False, 1)
@@ -118,12 +118,12 @@ class Trainer:
         # self.models['CycledViewProjection'] = crossView.CycledViewProjection(in_dim=8)
         # self.models["CrossViewTransformer"] = crossView.CrossViewTransformer(128)
 
-        self.models["decoder"] = crossView.Decoder(
-            self.models["encoder"].resnet_encoder.num_ch_enc, self.opt.num_class, self.opt.occ_map_size, in_features=128)
+        # self.models["decoder"] = crossView.Decoder(
+        #     self.models["encoder"].resnet_encoder.num_ch_enc, self.opt.num_class, self.opt.occ_map_size, in_features=128)
         # self.models["transform_decoder"] = crossView.Decoder(
         #     self.models["encoder"].resnet_encoder.num_ch_enc, self.opt.num_class, self.opt.occ_map_size, "transform_decoder")
 
-        self.pipeline = ProjectWDepth(self.models, self.opt)
+        self.pipeline = P_BasicTransformer(None, self.opt)
         self.pipeline.to(self.device)
         self.base_parameters_to_train += list(self.pipeline.parameters())
 
@@ -236,8 +236,8 @@ class Trainer:
             if key != "filename":
                 inputs[key] = input.to(self.device)
 
-        # x = inputs["color"]
-        x = torch.cat([inputs["color"], inputs["depth_gt"]], dim=1)
+        x = inputs["color"]
+        # x = torch.cat([inputs["color"], inputs["depth_gt"]], dim=1)
 
         outputs = {}
         outputs["topview"] = self.pipeline(x)
@@ -449,7 +449,7 @@ class Trainer:
             self.writer.add_image(f"bev_pred/{batch_idx}",
                 normalize_image(np.expand_dims(pred, axis=0), (0, 2)), self.epoch)
 
-            if self.multimodal_input:            
+            if "chandrakar_input" in inputs:            
                 # Chandrakar input data
                 chandrakar_input = inputs["chandrakar_input"][0].detach().cpu()
                 # For chandrakar depth input
@@ -544,19 +544,19 @@ class Trainer:
             "loading model from folder {}".format(
                 self.opt.load_weights_folder))
 
-        for key in self.models.keys():
-            if "discriminator" not in key:
-                print("Loading {} weights...".format(key))
-                path = os.path.join(
-                    self.opt.load_weights_folder,
-                    "{}.pth".format(key))
-                model_dict = self.models[key].state_dict()
-                pretrained_dict = torch.load(path)
-                if 'epoch' in pretrained_dict:
-                    self.start_epoch = pretrained_dict['epoch']
-                pretrained_dict = {k: v for k, v in pretrained_dict.items() if k in model_dict}
-                model_dict.update(pretrained_dict)
-                self.models[key].load_state_dict(model_dict)
+        # for key in self.models.keys():
+        #     if "discriminator" not in key:
+        #         print("Loading {} weights...".format(key))
+        #         path = os.path.join(
+        #             self.opt.load_weights_folder,
+        #             "{}.pth".format(key))
+        #         model_dict = self.models[key].state_dict()
+        #         pretrained_dict = torch.load(path)
+        #         if 'epoch' in pretrained_dict:
+        #             self.start_epoch = pretrained_dict['epoch']
+        #         pretrained_dict = {k: v for k, v in pretrained_dict.items() if k in model_dict}
+        #         model_dict.update(pretrained_dict)
+        #         self.models[key].load_state_dict(model_dict)
 
         # Pipeline param load
         path = os.path.join(self.opt.load_weights_folder, "pipeline.pth")
@@ -566,9 +566,10 @@ class Trainer:
             print("LOADING PIPELINE WEIGHTS FOR CLASS: ", pretrained_dict["class"])
             if 'epoch' in pretrained_dict:
                 self.start_epoch = pretrained_dict['epoch']
-            pretrained_dict = {k: v for k, v in pretrained_dict.items() if k in model_dict}
+            # pretrained_dict = {k: v for k, v in pretrained_dict.items() if k in model_dict}
             model_dict.update(pretrained_dict)
-            self.pipeline.load_state_dict(model_dict)
+            mk, uk = self.pipeline.load_state_dict(model_dict)
+            print(mk, uk)
 
         # loading adam state
         if self.opt.load_weights_folder == "":

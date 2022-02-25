@@ -7,6 +7,7 @@ import matplotlib.pyplot as PLT
 import numpy as np
 import cv2
 import kornia.filters as ktf
+from kornia.losses import dice_loss
 
 
 def _gather_feat(feat, ind, mask=None):
@@ -58,7 +59,7 @@ class compute_losses(nn.Module):
         self.device = device
         self.L1Loss = nn.L1Loss()
 
-    def forward(self, opt, weight, inputs, outputs, features, retransform_features):
+    def forward(self, opt, weight, inputs, outputs, features=None, retransform_features=None):
         losses = {}
         type = opt.type
         # losses["topview_loss"] = 0
@@ -80,9 +81,10 @@ class compute_losses(nn.Module):
                 inputs[topview_key],
                 weight[type])
 
-        losses["transform_loss"] = self.compute_transform_losses(
-            features,
-            retransform_features)
+        if (features is not None) and (retransform_features is not None):
+            losses["transform_loss"] = self.compute_transform_losses(
+                features,
+                retransform_features)
 
         if "pred_depth" in outputs:
             losses["depth_loss"] = self.compute_depth_losses(
@@ -103,7 +105,8 @@ class compute_losses(nn.Module):
     def compute_topview_loss(self, outputs, true_top_view, weight):
         generated_top_view = outputs
         true_top_view = torch.squeeze(true_top_view.long(), dim=1)
-        loss = nn.CrossEntropyLoss(weight=torch.Tensor([1., 3, 2]).cuda())
+        # loss = nn.CrossEntropyLoss(weight=torch.Tensor([1., 3, 2]).cuda())
+        loss = dice_loss
         output = loss(generated_top_view, true_top_view)
         return output.mean()
 

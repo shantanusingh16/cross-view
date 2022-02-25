@@ -176,9 +176,9 @@ class GibsonDataset(data.Dataset):
         # self.depth_projector = DepthProjector(self.opt)
 
         self.ego_map_transform = A.Compose([
-            # A.Resize(height=self.height, width=self.width_ar, interpolation=cv2.INTER_NEAREST, always_apply=True), # If input is depth
-            # A.CenterCrop(height=self.height, width=self.width, always_apply=True),
-            A.Resize(height=self.bev_height, width=self.bev_width, interpolation=cv2.INTER_NEAREST, always_apply=True), # If input is bev
+            A.Resize(height=self.height, width=self.width_ar, interpolation=cv2.INTER_NEAREST, always_apply=True), # If input is depth
+            A.CenterCrop(height=self.height, width=self.width, always_apply=True),
+            # A.Resize(height=self.bev_height, width=self.bev_width, interpolation=cv2.INTER_NEAREST, always_apply=True), # If input is bev
             # A.augmentations.CoarseDropout(max_holes=8, max_height=32, max_width=32, min_holes=4, min_height=16, min_width=16, p=0.5)
             # A.augmentations.geometric.ShiftScaleRotate(shift_limit=0, scale_limit=0, rotate_limit=30, \
             #     interpolation=cv2.INTER_NEAREST, border_mode=cv2.BORDER_CONSTANT, value=0, p=0.8)

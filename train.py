@@ -39,6 +39,11 @@ import pickle
 
 from einops import rearrange
 
+from crossView.pipelines.transformer import P_BasicTransformer
+from crossView.pipelines.depth_pa_mm import DepthPreAttnMerge
+from crossView.pipelines.project_wdepth import ProjectWDepth
+
+
 def readlines(filename):
     """Read all the lines in a text file and return as a list
     """
@@ -82,32 +87,28 @@ class Trainer:
             self.set_seed()  # set seed
 
         # Initializing models
-        self.pos_emb1D = torch.nn.Parameter(torch.randn(1, 128, 64), requires_grad=True)
-        self.base_parameters_to_train.append(self.pos_emb1D)
-
-        self.setup_cam_coords()
+        # self.pos_emb1D = torch.nn.Parameter(torch.randn(1, 128, 64), requires_grad=True)
+        # self.base_parameters_to_train.append(self.pos_emb1D)
 
         self.models["encoder"] = crossView.Encoder(18, self.opt.height, self.opt.width, True)
         # self.models["BasicTransformer"] = crossView.BasicTransformer(8, 128)
         # self.models["BasicTransformer2"] = crossView.BasicTransformer2(8, 128)
-        self.models["BasicTransformer"] = crossView.MultiheadAttention(None, 128, 4, 32)
+        # self.models["BasicTransformer"] = crossView.MultiheadAttention(None, 128, 4, 32)
         
         
         if self.opt.chandrakar_input_dir != "None":
             self.multimodal_input = True
             # self.models["ChandrakarEncoder"] = crossView.ChandrakarEncoder(2, [4,4,2,2], 16)
-            # self.models["MergeMultimodal"] = crossView.MergeMultimodal(128, 2)
 
             # self.models["ChandrakarEncoder"] = crossView.ChandrakarEncoder(1, [2,2,2,2], 16)
             # self.models['CycledViewProjectionMultimodal'] = crossView.CycledViewProjectionMultimodal(in_dim=8, in_channels=128)
 
-            # self.models["ChandrakarEncoder"] = crossView.Encoder(18, self.opt.height, self.opt.width, False, False, 2)
+            self.models["ChandrakarEncoder"] = crossView.Encoder(18, self.opt.height, self.opt.width, False, False, 2)
 
             # To project the chandrakar features from 1 ch to 128 ch (same as resnet dim)
             # lambda x: rearrange(x, "b c (x p_x) (y p_y) -> b (p_x p_y c) x y", p_x=patch_size, p_y=patch_size)
-            self.models["ChandrakarEncoder"] = crossView.ChandrakarEncoder(1, [2,2,1,1], 16)
+            # self.models["ChandrakarEncoder"] = crossView.ChandrakarEncoder(1, [2,2,1,1], 16)
             # self.models["ChandrakarAttn"] = crossView.MultiheadAttention(None, 128, 4, 32)
-            self.models["MergeMultimodal"] = crossView.MergeMultimodal(128, 2)
         else:
             self.multimodal_input = False
 
@@ -119,18 +120,22 @@ class Trainer:
 
         self.models["decoder"] = crossView.Decoder(
             self.models["encoder"].resnet_encoder.num_ch_enc, self.opt.num_class, self.opt.occ_map_size, in_features=128)
-        self.models["transform_decoder"] = crossView.Decoder(
-            self.models["encoder"].resnet_encoder.num_ch_enc, self.opt.num_class, self.opt.occ_map_size, "transform_decoder")
+        # self.models["transform_decoder"] = crossView.Decoder(
+        #     self.models["encoder"].resnet_encoder.num_ch_enc, self.opt.num_class, self.opt.occ_map_size, "transform_decoder")
 
-        for key in self.models.keys():
-            self.models[key].to(self.device)
-            if "discr" in key:
-                self.parameters_to_train_D += list(
-                    self.models[key].parameters())
-            elif "transform" in key:
-                self.transform_parameters_to_train += list(self.models[key].parameters())
-            else:
-                self.base_parameters_to_train += list(self.models[key].parameters())
+        self.pipeline = ProjectWDepth(self.models, self.opt)
+        self.pipeline.to(self.device)
+        self.base_parameters_to_train += list(self.pipeline.parameters())
+
+        # for key in self.models.keys():
+        #     self.models[key].to(self.device)
+        #     if "discr" in key:
+        #         self.parameters_to_train_D += list(
+        #             self.models[key].parameters())
+        #     elif "transform" in key:
+        #         self.transform_parameters_to_train += list(self.models[key].parameters())
+        #     else:
+        #         self.base_parameters_to_train += list(self.models[key].parameters())
         self.parameters_to_train = [
             {"params": self.transform_parameters_to_train, "lr": self.opt.lr_transform},
             {"params": self.base_parameters_to_train, "lr": self.opt.lr},
@@ -201,18 +206,6 @@ class Trainer:
                 len(train_dataset),
                 len(val_dataset)))
     
-
-    def setup_cam_coords(self):
-        proj_xs, proj_ys = np.meshgrid(
-            np.linspace(-1, 1, 8), np.linspace(1, -1, 8)
-        )
-        xs = proj_xs.reshape(-1)
-        ys = proj_ys.reshape(-1)
-        zs = -np.ones_like(xs)
-        K = np.eye(3)  # since fov=90
-        inv_K = np.linalg.inv(K)
-        self.cam_coords = torch.nn.Parameter(torch.from_numpy(inv_K @ np.array([xs, ys, zs])).float(), requires_grad=False)
-    
   
     def train(self):
         if not os.path.isdir(self.opt.log_root):
@@ -243,10 +236,18 @@ class Trainer:
             if key != "filename":
                 inputs[key] = input.to(self.device)
 
-        features = self.models["encoder"](inputs["color"])
+        # x = inputs["color"]
+        x = torch.cat([inputs["color"], inputs["depth_gt"]], dim=1)
 
-        b, c, h, w = features.shape
-        features = (features.reshape(b, c, -1) + self.pos_emb1D[:, :, :h*w].to(self.device)).reshape(b, c, h, w)
+        outputs = {}
+        outputs["topview"] = self.pipeline(x)
+
+        losses = self.criterion(self.opt, self.weight, inputs, outputs)
+
+        # features = self.models["encoder"](inputs["color"])
+
+        # b, c, h, w = features.shape
+        # features = (features.reshape(b, c, -1) + self.pos_emb1D[:, :, :h*w].to(self.device)).reshape(b, c, h, w)
         
         
         # x_feature = features
@@ -265,49 +266,49 @@ class Trainer:
         # features = self.models["BasicTransformer2"](chandrakar_features, features, chandrakar_features)
         # x_feature = retransform_features = transform_feature = features
 
-        x_feature = retransform_features = transform_feature = features #= depth_features
-        features = self.models["BasicTransformer"](features, features, features)
+        # x_feature = retransform_features = transform_feature = features #= depth_features
+        # features = self.models["BasicTransformer"](features, features, features)
 
-        depth = F.interpolate(input=inputs["depth_gt"], size=(w, h), mode='bilinear')
-        pc = depth.reshape(b, 1, -1) * self.cam_coords.to(self.device).unsqueeze(dim=0).repeat(b, 1, 1)
-        pc = pc.transpose(-1, -2)
-        pc[..., 1] += self.opt.cam_height
+        # depth = F.interpolate(input=inputs["depth_gt"], size=(w, h), mode='bilinear')
+        # pc = depth.reshape(b, 1, -1) * self.cam_coords.to(self.device).unsqueeze(dim=0).repeat(b, 1, 1)
+        # pc = pc.transpose(-1, -2)
+        # pc[..., 1] += self.opt.cam_height
 
-        map_size = self.opt.occ_map_size // 4
-        cell_size = 3.2/map_size
+        # map_size = self.opt.occ_map_size // 4
+        # cell_size = 3.2/map_size
 
-        x_indices = (pc[..., 0]//cell_size).reshape(-1).long() + map_size//2
-        y_indices = pc[..., 1].reshape(-1)
-        z_indices = (pc[..., 2]//cell_size).reshape(-1).long() + map_size
-        batch_indices = torch.cat([torch.full([pc.shape[1]], ix, device=x_indices.device, dtype=torch.long) for ix in range(pc.shape[0])])
+        # x_indices = (pc[..., 0]//cell_size).reshape(-1).long() + map_size//2
+        # y_indices = pc[..., 1].reshape(-1)
+        # z_indices = (pc[..., 2]//cell_size).reshape(-1).long() + map_size
+        # batch_indices = torch.cat([torch.full([pc.shape[1]], ix, device=x_indices.device, dtype=torch.long) for ix in range(pc.shape[0])])
 
-        valid_indices = (x_indices >= 0) & (x_indices < map_size) & (z_indices >= 0) & (z_indices < map_size) & (y_indices < self.opt.obstacle_height)
-        flat_idx = ((batch_indices * map_size * map_size) + (z_indices * map_size) + x_indices)[valid_indices]
+        # valid_indices = (x_indices >= 0) & (x_indices < map_size) & (z_indices >= 0) & (z_indices < map_size) & (y_indices < self.opt.obstacle_height)
+        # flat_idx = ((batch_indices * map_size * map_size) + (z_indices * map_size) + x_indices)[valid_indices]
 
-        rank = torch.argsort(flat_idx)
-        flat_idx = flat_idx[rank]
+        # rank = torch.argsort(flat_idx)
+        # flat_idx = flat_idx[rank]
 
-        kept = torch.ones_like(flat_idx, device=flat_idx.device, dtype=torch.long)
-        kept[:-1] = flat_idx[1:] != flat_idx[:-1]
+        # kept = torch.ones_like(flat_idx, device=flat_idx.device, dtype=torch.long)
+        # kept[:-1] = flat_idx[1:] != flat_idx[:-1]
 
-        b, c, h, w = features.shape
-        features = features.reshape((b, c, -1)).transpose(-2, -1).reshape((-1, c))
-        features = features[valid_indices][rank]
+        # b, c, h, w = features.shape
+        # features = features.reshape((b, c, -1)).transpose(-2, -1).reshape((-1, c))
+        # features = features[valid_indices][rank]
 
-        feature_sum = torch.cumsum(features, dim=0)
-        x_sum = feature_sum[kept] - features[kept]
-        x_sum = torch.cat([x_sum[:1], x_sum[1:] - x_sum[:-1]], dim=0)
+        # feature_sum = torch.cumsum(features, dim=0)
+        # x_sum = feature_sum[kept] - features[kept]
+        # x_sum = torch.cat([x_sum[:1], x_sum[1:] - x_sum[:-1]], dim=0)
 
-        warped_feature_grid = torch.zeros((b * map_size * map_size, c), dtype=torch.float32, device=x_sum.device, requires_grad=True).clone()
-        warped_feature_grid[flat_idx] = x_sum
-        warped_feature_grid = warped_feature_grid.reshape((b, map_size, map_size, c)).permute((0, 3, 1, 2)) # B x C x Bh x Bw
+        # warped_feature_grid = torch.zeros((b * map_size * map_size, c), dtype=torch.float32, device=x_sum.device, requires_grad=True).clone()
+        # warped_feature_grid[flat_idx] = x_sum
+        # warped_feature_grid = warped_feature_grid.reshape((b, map_size, map_size, c)).permute((0, 3, 1, 2)) # B x C x Bh x Bw
 
         # patch_size = 8
         # chandrakar_patches = rearrange(inputs["chandrakar_input"], "b c (x p_x) (y p_y) -> b (p_x p_y c) x y", p_x=patch_size, p_y=patch_size)
 
-        chandrakar_features = self.models["ChandrakarEncoder"](inputs["chandrakar_input"])
-        # chandrakar_features = self.models["ChandrakarAttn"](chandrakar_features, chandrakar_features, chandrakar_features)
-        features = self.models["MergeMultimodal"](warped_feature_grid,  chandrakar_features)
+        # chandrakar_features = self.models["ChandrakarEncoder"](inputs["chandrakar_input"])
+        # # chandrakar_features = self.models["ChandrakarAttn"](chandrakar_features, chandrakar_features, chandrakar_features)
+        # features = self.models["MergeMultimodal"](warped_feature_grid,  chandrakar_features)
         
 
         # if self.multimodal_input:
@@ -330,16 +331,16 @@ class Trainer:
         # chandrakar_features = self.models["ChandrakarEncoder"](inputs["chandrakar_input"])
         # features = self.models["MergeMultimodal"](features,  chandrakar_features)
 
-        x_feature = retransform_features = transform_feature = features #= depth_features
-        chandrakar_features = self.models["BasicTransformer2"](features, features, chandrakar_features)  # Based on RGB similarity, warp chandrakar to entire image.
+        # x_feature = retransform_features = transform_feature = features #= depth_features
+        # chandrakar_features = self.models["BasicTransformer2"](features, features, chandrakar_features)  # Based on RGB similarity, warp chandrakar to entire image.
 
-        features = torch.cat([features, chandrakar_features], dim=1)
+        # features = torch.cat([features, chandrakar_features], dim=1)
         
-        outputs["topview"] = self.models["decoder"](features)
-        outputs["transform_topview"] = self.models["transform_decoder"](transform_feature)
+        # outputs["topview"] = self.models["decoder"](features)
+        # outputs["transform_topview"] = self.models["transform_decoder"](transform_feature)
         # if validation:
         #     return outputs
-        losses = self.criterion(self.opt, self.weight, inputs, outputs, x_feature, retransform_features)
+        # losses = self.criterion(self.opt, self.weight, inputs, outputs, x_feature, retransform_features)
 
         return outputs, losses
 
@@ -510,15 +511,20 @@ class Trainer:
         if not os.path.exists(save_path):
             os.makedirs(save_path)
 
-        for model_name, model in self.models.items():
-            model_path = os.path.join(save_path, "{}.pth".format(model_name))
-            state_dict = model.state_dict()
-            state_dict['epoch'] = self.epoch
-            if model_name == "encoder":
-                state_dict["height"] = self.opt.height
-                state_dict["width"] = self.opt.width
+        # for model_name, model in self.models.items():
+        #     model_path = os.path.join(save_path, "{}.pth".format(model_name))
+        #     state_dict = model.state_dict()
+        #     state_dict['epoch'] = self.epoch
+        #     if model_name == "encoder":
+        #         state_dict["height"] = self.opt.height
+        #         state_dict["width"] = self.opt.width
 
-            torch.save(state_dict, model_path)
+        #     torch.save(state_dict, model_path)
+
+        pipeline_state_dict = self.pipeline.state_dict()
+        pipeline_state_dict["class"] = type(self.pipeline).__name__
+        torch.save(pipeline_state_dict, os.path.join(save_path, "pipeline.pth"))
+
         optim_path = os.path.join(save_path, "{}.pth".format("adam"))
         torch.save(self.model_optimizer.state_dict(), optim_path)
 
@@ -551,6 +557,18 @@ class Trainer:
                 pretrained_dict = {k: v for k, v in pretrained_dict.items() if k in model_dict}
                 model_dict.update(pretrained_dict)
                 self.models[key].load_state_dict(model_dict)
+
+        # Pipeline param load
+        path = os.path.join(self.opt.load_weights_folder, "pipeline.pth")
+        if os.path.exists(path):
+            model_dict = self.pipeline.state_dict()
+            pretrained_dict = torch.load(path)
+            print("LOADING PIPELINE WEIGHTS FOR CLASS: ", pretrained_dict["class"])
+            if 'epoch' in pretrained_dict:
+                self.start_epoch = pretrained_dict['epoch']
+            pretrained_dict = {k: v for k, v in pretrained_dict.items() if k in model_dict}
+            model_dict.update(pretrained_dict)
+            self.pipeline.load_state_dict(model_dict)
 
         # loading adam state
         if self.opt.load_weights_folder == "":

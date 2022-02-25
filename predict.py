@@ -178,7 +178,17 @@ def test(args):
         models[key].to(device)
         models[key].eval()
 
-    pipeline = P_BasicTransformer(models=models, opt=args)
+    pipeline_path = os.path.join(args.model_path, "pipeline.pth")
+    if os.path.exists(pipeline_path):
+        pipeline_dict = torch.load(pipeline_path, map_location=device)
+        print("LOADING PIPELINE WEIGHTS FOR CLASS: ", pipeline_dict["class"])
+        pipeline = P_BasicTransformer(models=models, opt=args)
+        filtered_dict_pipeline = {
+            k: v for k,
+            v in pipeline_dict.items() if k in pipeline.state_dict()}
+        pipeline.load_state_dict(filtered_dict_pipeline)
+    else:
+        print("PIPELINE NOT LOADED. FIX THE CODE RUN BELOW MANUALLY")
 
     model_name = os.path.basename(os.path.dirname(args.model_path))
 

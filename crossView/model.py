@@ -191,9 +191,10 @@ class Encoder(nn.Module):
         features = []
         batch_size, c, h, w = x.shape
         features.extend(self.resnet_encoder(x))
-        features.append(self.pool(self.conv1(features[-1])))
+        features.append(self.conv1(features[-1]))
+        # features.append(self.pool(self.conv1(features[-1])))
         features.append(self.conv2(features[-1]))
-        # features.append(self.pool(features[-1]))
+        # features.append(self.pool(self.conv2(features[-1])))
 
         if self.all_features:
             return features

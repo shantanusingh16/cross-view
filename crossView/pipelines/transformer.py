@@ -68,8 +68,8 @@ class MultiBlockTransformer(nn.Module):
         self.encoder = crossView.Encoder(18, self.opt.height, self.opt.width, True) # models["encoder"]
         blocks = []
         for _ in range(nblocks):
-            blocks.append(crossView.MultiheadAttention(None, 128, 4, 32)),
-            blocks.append(crossView.FeedForward(64, 64, skip_conn=True)
+            blocks.append(crossView.MultiheadAttention(None, 128, 4, 32, dropout=0.3)),
+            blocks.append(crossView.FeedForward(64, 64, skip_conn=True, dropout=0.3)
         )
         self.transformer = nn.Sequential(*blocks)
         self.decoder = crossView.Decoder(

@@ -93,8 +93,8 @@ def img_to_lid(depth_map, cam_mat, label=None):
     return pts_rect
 
 def process_topview(topview, w, h):
-    topview = topview.crop((32, 64, 96, 128)) # To crop out the bottom center 3.2x3.2 m map from 6.4x6.4m map
-    # topview = topview.crop((13, 27, 115, 128))  # To crop out the bottom center 5.05x5.05 m map from 6.4x6.4m map
+    # topview = topview.crop((32, 64, 96, 128)) # To crop out the bottom center 3.2x3.2 m map from 6.4x6.4m map
+    topview = topview.crop((13, 27, 115, 128))  # To crop out the bottom center 5.05x5.05 m map from 6.4x6.4m map
     topview = topview.resize((w, h), pil.NEAREST)
     topview = np.array(topview)
     return topview
@@ -149,8 +149,8 @@ class Gibson4Dataset(data.Dataset):
 
         self.bev_width = self.occ_map_size
         self.bev_height = self.occ_map_size
-        self.bev_res = 3.2 / self.occ_map_size
-        # self.bev_res = 5.05 / self.occ_map_size
+        # self.bev_res = 3.2 / self.occ_map_size
+        self.bev_res = 5.05 / self.occ_map_size
 
         # Since we are cropping, the field of view changes, but the focal length remains the same.
         # The cropping is equal on both sides, so (cx, cy) are always at image center.
@@ -183,9 +183,9 @@ class Gibson4Dataset(data.Dataset):
         # self.depth_projector = DepthProjector(self.opt)
 
         self.ego_map_transform = A.Compose([
-            A.Resize(height=self.height, width=self.width_ar, interpolation=cv2.INTER_NEAREST, always_apply=True), # If input is depth
-            A.CenterCrop(height=self.height, width=self.width, always_apply=True)
-            # A.Resize(height=self.bev_height, width=self.bev_width, interpolation=cv2.INTER_NEAREST, always_apply=True), # If input is bev
+            # A.Resize(height=self.height, width=self.width_ar, interpolation=cv2.INTER_NEAREST, always_apply=True), # If input is depth
+            # A.CenterCrop(height=self.height, width=self.width, always_apply=True)
+            A.Resize(height=self.bev_height, width=self.bev_width, interpolation=cv2.INTER_NEAREST, always_apply=True), # If input is bev
             # A.augmentations.CoarseDropout(max_holes=8, max_height=32, max_width=32, min_holes=4, min_height=16, min_width=16, p=0.5)
             # A.augmentations.geometric.ShiftScaleRotate(shift_limit=0, scale_limit=0, rotate_limit=30, \
             #     interpolation=cv2.INTER_NEAREST, border_mode=cv2.BORDER_CONSTANT, value=0, p=0.8)

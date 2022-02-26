@@ -39,7 +39,7 @@ import pickle
 
 from einops import rearrange
 
-from crossView.pipelines.transformer import P_BasicTransformer
+from crossView.pipelines.transformer import P_BasicTransformer, MultiBlockTransformer
 from crossView.pipelines.depth_pa_mm import DepthPreAttnMerge
 from crossView.pipelines.project_wdepth import ProjectWDepth
 
@@ -123,7 +123,7 @@ class Trainer:
         # self.models["transform_decoder"] = crossView.Decoder(
         #     self.models["encoder"].resnet_encoder.num_ch_enc, self.opt.num_class, self.opt.occ_map_size, "transform_decoder")
 
-        self.pipeline = P_BasicTransformer(None, self.opt)
+        self.pipeline = MultiBlockTransformer(None, self.opt, 6)
         self.pipeline.to(self.device)
         self.base_parameters_to_train += list(self.pipeline.parameters())
 

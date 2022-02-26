@@ -34,7 +34,13 @@ class MultiheadAttention(nn.Module):
         ) if project_out else nn.Identity()
 
 
-    def forward(self, x_key, x_query, x_value):
+    def forward(self, x_key, x_query=None, x_value=None):
+        if x_query is None :
+            x_query = x_key.clone()
+        
+        if x_value is None :
+            x_value = x_key.clone()
+
         B, C, H, W = x_value.shape
 
         x_key = x_key.reshape((*x_key.shape[:2], -1)).transpose(-1,-2)  # Convert B x C x H X W -> B x HW x C
@@ -51,8 +57,8 @@ class MultiheadAttention(nn.Module):
 
         attn = self.attend(dots)
 
-        out = torch.matmul(attn, v)
-        out = rearrange(out, 'b h n d -> b n (h d)')
+        T = torch.matmul(attn, v)
+        out = rearrange(T, 'b h n d -> b n (h d)') + x_value
         out = self.to_out(out)
         out = out.reshape((B, C, H, W))
         return out

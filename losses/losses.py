@@ -105,8 +105,8 @@ class compute_losses(nn.Module):
     def compute_topview_loss(self, outputs, true_top_view, weight):
         generated_top_view = outputs
         true_top_view = torch.squeeze(true_top_view.long(), dim=1)
-        # loss = nn.CrossEntropyLoss(weight=torch.Tensor([1., 3, 2]).cuda())
-        loss = dice_loss
+        loss = nn.CrossEntropyLoss(weight=torch.Tensor([1., 3, 2]).cuda())
+        # loss = dice_loss
         output = loss(generated_top_view, true_top_view)
         return output.mean()
 

@@ -18,6 +18,8 @@ from pytorch_grad_cam.utils.image import show_cam_on_image
 
 import crossView
 
+from crossView.model import FeedForward
+
 from utils import invnormalize_imagenet
 
 
@@ -42,6 +44,40 @@ class P_BasicTransformer(nn.Module):
         features = (features.reshape(b, c, -1) + self.pos_emb1D[:, :, :h*w]).reshape(b, c, h, w)
 
         features = self.basic_transformer(features, features, features)  # BasicTransformer
+
+        topview = self.decoder(features)
+
+        return topview
+
+
+#################################### Transformer Multiblock ########################################
+
+class MultiBlockTransformer(nn.Module):
+    def __init__(self, models, opt, nblocks=1):
+        super(MultiBlockTransformer, self).__init__()
+
+        self.opt = opt
+        self.pos_emb1D = torch.nn.Parameter(torch.randn(1, 128, 64), requires_grad=True)
+
+        self.encoder = crossView.Encoder(18, self.opt.height, self.opt.width, True) # models["encoder"]
+        blocks = []
+        for _ in range(nblocks):
+            blocks.append(crossView.MultiheadAttention(None, 128, 4, 32)),
+            blocks.append(crossView.FeedForward(64, 64, skip_conn=True)
+        )
+        self.transformer = nn.Sequential(*blocks)
+        self.decoder = crossView.Decoder(
+            self.encoder.resnet_encoder.num_ch_enc, self.opt.num_class, self.opt.occ_map_size, in_features=128) # models["decoder"]
+
+        self.bottleneck = [blocks[-1]]
+
+    def forward(self, x):
+        features = self.encoder(x)
+        
+        b, c, h, w = features.shape
+        features = (features.reshape(b, c, -1) + self.pos_emb1D[:, :, :h*w]).reshape(b, c, h, w)
+
+        features = self.transformer(features) 
 
         topview = self.decoder(features)
 

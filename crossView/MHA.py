@@ -32,6 +32,8 @@ class MultiheadAttention(nn.Module):
             nn.Linear(inner_dim, in_dim),
             nn.Dropout(dropout)
         ) if project_out else nn.Identity()
+        
+        self.scores = None
 
 
     def forward(self, x_key, x_query=None, x_value=None):
@@ -56,6 +58,8 @@ class MultiheadAttention(nn.Module):
         dots = torch.matmul(q, k.transpose(-1, -2)) * self.scale
 
         attn = self.attend(dots)
+        
+        self.scores = attn
 
         T = torch.matmul(attn, v)
         out = rearrange(T, 'b h n d -> b n (h d)') + x_value

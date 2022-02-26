@@ -70,7 +70,8 @@ class MultiBlockTransformer(nn.Module):
             self.encoder.resnet_encoder.num_ch_enc, self.opt.num_class, self.opt.occ_map_size, in_features=128) # models["decoder"]
 
         self.bottleneck = [blocks[-1]]
-
+        
+    
     def forward(self, x):
         features = self.encoder(x)
         
@@ -78,6 +79,32 @@ class MultiBlockTransformer(nn.Module):
         features = (features.reshape(b, c, -1) + self.pos_emb1D[:, :, :h*w]).reshape(b, c, h, w)
 
         features = self.transformer(features) 
+        
+        topview = self.decoder(features)
+
+        return topview
+    
+    
+class BasicTransformer_Old(nn.Module):
+    def __init__(self, models, opt):
+        super(BasicTransformer_Old, self).__init__()
+
+        self.opt = opt
+
+        self.encoder = crossView.Encoder(18, self.opt.height, self.opt.width, True) # models["encoder"]
+        self.BasicTransformer = crossView.BasicTransformer(8, 128) # models["BasicTransformer"]
+        self.decoder = crossView.Decoder(
+            self.encoder.resnet_encoder.num_ch_enc, self.opt.num_class, self.opt.occ_map_size, in_features=128) # models["decoder"]
+
+        self.bottleneck = [self.BasicTransformer.merge2]
+
+
+    def forward(self, x):
+        features = self.encoder(x)
+        
+        b, c, h, w = features.shape
+
+        features = self.BasicTransformer(features)  # BasicTransformer
 
         topview = self.decoder(features)
 

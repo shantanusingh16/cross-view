@@ -11,9 +11,12 @@ from crossView import model, CrossViewTransformer, CycledViewProjection
 import numpy as np
 
 import torch
+import torch.nn.functional as F
 from torch.utils.data import DataLoader
 
 from easydict import EasyDict as edict
+
+from utils import invnormalize_imagenet
 
 import crossView
 
@@ -23,7 +26,7 @@ from utils import mean_IU, mean_precision, invnormalize_imagenet
 from pytorch_grad_cam import GradCAM
 from pytorch_grad_cam.utils.image import show_cam_on_image
 
-from crossView.pipelines.transformer import P_BasicTransformer
+from crossView.pipelines.transformer import P_BasicTransformer, BasicTransformer_Old
 
 from crossView.grad_cam import SegmentationModelOutputWrapper, SemanticSegmentationTarget
 
@@ -88,107 +91,128 @@ def get_args():
 
 
 def test(args):
-    models = {}
+    # models = {}
     device = torch.device("cuda")
-    encoder_path = os.path.join(args.model_path, "encoder.pth")
-    encoder_dict = torch.load(encoder_path, map_location=device)
-    feed_height = encoder_dict["height"]
-    feed_width = encoder_dict["width"]
-    models["encoder"] = model.Encoder(18, feed_width, feed_height, False)
-    filtered_dict_enc = {
-        k: v for k,
-        v in encoder_dict.items() if k in models["encoder"].state_dict()}
-    models["encoder"].load_state_dict(filtered_dict_enc)
+    # encoder_path = os.path.join(args.model_path, "encoder.pth")
+    # encoder_dict = torch.load(encoder_path, map_location=device)
+    # feed_height = encoder_dict["height"]
+    # feed_width = encoder_dict["width"]
+    # models["encoder"] = model.Encoder(18, feed_width, feed_height, False)
+    # filtered_dict_enc = {
+    #     k: v for k,
+    #     v in encoder_dict.items() if k in models["encoder"].state_dict()}
+    # models["encoder"].load_state_dict(filtered_dict_enc)
 
-    CVP_path = os.path.join(args.model_path, "CycledViewProjection.pth")
-    if os.path.exists(CVP_path):
-        CVP_dict = torch.load(CVP_path, map_location=device)
-        models['CycledViewProjection'] = CycledViewProjection(in_dim=8)
-        filtered_dict_cvp = {
-            k: v for k,
-            v in CVP_dict.items() if k in models["CycledViewProjection"].state_dict()}
-        models["CycledViewProjection"].load_state_dict(filtered_dict_cvp)
+    # CVP_path = os.path.join(args.model_path, "CycledViewProjection.pth")
+    # if os.path.exists(CVP_path):
+    #     CVP_dict = torch.load(CVP_path, map_location=device)
+    #     models['CycledViewProjection'] = CycledViewProjection(in_dim=8)
+    #     filtered_dict_cvp = {
+    #         k: v for k,
+    #         v in CVP_dict.items() if k in models["CycledViewProjection"].state_dict()}
+    #     models["CycledViewProjection"].load_state_dict(filtered_dict_cvp)
 
-    CVT_path = os.path.join(args.model_path, "CrossViewTransformer.pth")
-    if os.path.exists(CVT_path):
-        CVT_dict = torch.load(CVT_path, map_location=device)
-        models['CrossViewTransformer'] = CrossViewTransformer(128)
-        filtered_dict_cvt = {
-            k: v for k,
-            v in CVT_dict.items() if k in models["CrossViewTransformer"].state_dict()}
-        models["CrossViewTransformer"].load_state_dict(filtered_dict_cvt)
+    # CVT_path = os.path.join(args.model_path, "CrossViewTransformer.pth")
+    # if os.path.exists(CVT_path):
+    #     CVT_dict = torch.load(CVT_path, map_location=device)
+    #     models['CrossViewTransformer'] = CrossViewTransformer(128)
+    #     filtered_dict_cvt = {
+    #         k: v for k,
+    #         v in CVT_dict.items() if k in models["CrossViewTransformer"].state_dict()}
+    #     models["CrossViewTransformer"].load_state_dict(filtered_dict_cvt)
 
-    decoder_path = os.path.join(args.model_path, "decoder.pth")
-    DEC_dict = torch.load(decoder_path, map_location=device)
-    models["decoder"] = model.Decoder(
-        models["encoder"].resnet_encoder.num_ch_enc, args.num_class, args.occ_map_size)
-    filtered_dict_dec = {
-        k: v for k,
-        v in DEC_dict.items() if k in models["decoder"].state_dict()}
-    models["decoder"].load_state_dict(filtered_dict_dec)
+    # decoder_path = os.path.join(args.model_path, "decoder.pth")
+    # DEC_dict = torch.load(decoder_path, map_location=device)
+    # models["decoder"] = model.Decoder(
+    #     models["encoder"].resnet_encoder.num_ch_enc, args.num_class, args.occ_map_size)
+    # filtered_dict_dec = {
+    #     k: v for k,
+    #     v in DEC_dict.items() if k in models["decoder"].state_dict()}
+    # models["decoder"].load_state_dict(filtered_dict_dec)
 
-    transform_decoder_path = os.path.join(args.model_path, "transform_decoder.pth")
-    TRDEC_dict = torch.load(transform_decoder_path, map_location=device)
-    models["transform_decoder"] = model.Decoder(
-        models["encoder"].resnet_encoder.num_ch_enc, args.num_class, args.occ_map_size, in_features=128)
-    filtered_dict_trdec = {
-        k: v for k,
-        v in TRDEC_dict.items() if k in models["transform_decoder"].state_dict()}
-    models["transform_decoder"].load_state_dict(filtered_dict_trdec)
+    # transform_decoder_path = os.path.join(args.model_path, "transform_decoder.pth")
+    # TRDEC_dict = torch.load(transform_decoder_path, map_location=device)
+    # models["transform_decoder"] = model.Decoder(
+    #     models["encoder"].resnet_encoder.num_ch_enc, args.num_class, args.occ_map_size, in_features=128)
+    # filtered_dict_trdec = {
+    #     k: v for k,
+    #     v in TRDEC_dict.items() if k in models["transform_decoder"].state_dict()}
+    # models["transform_decoder"].load_state_dict(filtered_dict_trdec)
 
-    base_transformer_path = os.path.join(args.model_path, "BasicTransformer.pth")
-    if os.path.exists(base_transformer_path):
-        bTR_dict = torch.load(base_transformer_path, map_location=device)
-        models["BasicTransformer"] = crossView.BasicTransformer(8, 128)
-        filtered_dict_btr = {
-            k: v for k,
-            v in bTR_dict.items() if k in models["BasicTransformer"].state_dict()}
-        models["BasicTransformer"].load_state_dict(filtered_dict_btr)
+    # base_transformer_path = os.path.join(args.model_path, "BasicTransformer.pth")
+    # if os.path.exists(base_transformer_path):
+    #     bTR_dict = torch.load(base_transformer_path, map_location=device)
+    #     models["BasicTransformer"] = crossView.BasicTransformer(8, 128)
+    #     filtered_dict_btr = {
+    #         k: v for k,
+    #         v in bTR_dict.items() if k in models["BasicTransformer"].state_dict()}
+    #     models["BasicTransformer"].load_state_dict(filtered_dict_btr)
 
-    chandrakar_encoder_path = os.path.join(args.model_path, "ChandrakarEncoder.pth")
-    if os.path.exists(chandrakar_encoder_path):
-        CKENC_dict = torch.load(chandrakar_encoder_path, map_location=device)
-        # models["ChandrakarEncoder"] = crossView.ChandrakarEncoder(2, [4,4,4,2], 16)
-        # models["ChandrakarEncoder"] = crossView.ChandrakarEncoder(1, [2,2,2,2], 16)
-        models["ChandrakarEncoder"] = crossView.Encoder(18, feed_width, feed_height, False, False, 2)
-        filtered_dict_ckenc = {
-            k: v for k,
-            v in CKENC_dict.items() if k in models["ChandrakarEncoder"].state_dict()}
-        models["ChandrakarEncoder"].load_state_dict(filtered_dict_ckenc)
+    # chandrakar_encoder_path = os.path.join(args.model_path, "ChandrakarEncoder.pth")
+    # if os.path.exists(chandrakar_encoder_path):
+    #     CKENC_dict = torch.load(chandrakar_encoder_path, map_location=device)
+    #     # models["ChandrakarEncoder"] = crossView.ChandrakarEncoder(2, [4,4,4,2], 16)
+    #     # models["ChandrakarEncoder"] = crossView.ChandrakarEncoder(1, [2,2,2,2], 16)
+    #     models["ChandrakarEncoder"] = crossView.Encoder(18, feed_width, feed_height, False, False, 2)
+    #     filtered_dict_ckenc = {
+    #         k: v for k,
+    #         v in CKENC_dict.items() if k in models["ChandrakarEncoder"].state_dict()}
+    #     models["ChandrakarEncoder"].load_state_dict(filtered_dict_ckenc)
 
-    merge_multimodal_path = os.path.join(args.model_path, "MergeMultimodal.pth")
-    if os.path.exists(merge_multimodal_path):
-        merge_multimodal_dict = torch.load(merge_multimodal_path, map_location=device)
-        models["MergeMultimodal"] = crossView.MergeMultimodal(128, 2)
-        filtered_dict_merge_multimodal = {
-            k: v for k,
-            v in merge_multimodal_dict.items() if k in models["MergeMultimodal"].state_dict()}
-        models["MergeMultimodal"].load_state_dict(filtered_dict_merge_multimodal)
+    # merge_multimodal_path = os.path.join(args.model_path, "MergeMultimodal.pth")
+    # if os.path.exists(merge_multimodal_path):
+    #     merge_multimodal_dict = torch.load(merge_multimodal_path, map_location=device)
+    #     models["MergeMultimodal"] = crossView.MergeMultimodal(128, 2)
+    #     filtered_dict_merge_multimodal = {
+    #         k: v for k,
+    #         v in merge_multimodal_dict.items() if k in models["MergeMultimodal"].state_dict()}
+    #     models["MergeMultimodal"].load_state_dict(filtered_dict_merge_multimodal)
 
-    cvp_multimodal_path = os.path.join(args.model_path, "CycledViewProjectionMultimodal.pth")
-    if os.path.exists(cvp_multimodal_path):
-        cvp_multimodal_dict = torch.load(cvp_multimodal_path, map_location=device)
-        models['CycledViewProjectionMultimodal'] = crossView.CycledViewProjectionMultimodal(in_dim=8, in_channels=128)
-        filtered_dict_cvp_multimodal = {
-            k: v for k,
-            v in cvp_multimodal_dict.items() if k in models["CycledViewProjectionMultimodal"].state_dict()}
-        models["CycledViewProjectionMultimodal"].load_state_dict(filtered_dict_cvp_multimodal)
+    # cvp_multimodal_path = os.path.join(args.model_path, "CycledViewProjectionMultimodal.pth")
+    # if os.path.exists(cvp_multimodal_path):
+    #     cvp_multimodal_dict = torch.load(cvp_multimodal_path, map_location=device)
+    #     models['CycledViewProjectionMultimodal'] = crossView.CycledViewProjectionMultimodal(in_dim=8, in_channels=128)
+    #     filtered_dict_cvp_multimodal = {
+    #         k: v for k,
+    #         v in cvp_multimodal_dict.items() if k in models["CycledViewProjectionMultimodal"].state_dict()}
+    #     models["CycledViewProjectionMultimodal"].load_state_dict(filtered_dict_cvp_multimodal)
 
-    for key in models.keys():
-        models[key].to(device)
-        models[key].eval()
+    # for key in models.keys():
+    #     models[key].to(device)
+    #     models[key].eval()
+    
+    pipeline = BasicTransformer_Old(models=None, opt=args)
+    for filename in os.listdir(args.model_path):
+        k = filename.replace(".pth", "")
+        if hasattr(pipeline, k):
+            weights = torch.load(os.path.join(args.model_path, filename), map_location=device)
+            model = getattr(pipeline, k)
+            print(k, [x for x in model.state_dict() if x not in weights])
+            filtered_weights = {x: y for x, y in weights.items() if x in model.state_dict()}
+            mk, uk = model.load_state_dict(filtered_weights)
+            print(mk, uk)
+        
+    pipeline.to(device)
+    pipeline.eval()
+    
+    pipeline_state_dict = pipeline.state_dict()
+    pipeline_state_dict["class"] = type(pipeline).__name__
+    torch.save(pipeline_state_dict, os.path.join(args.model_path, "pipeline.pth"))
 
-    pipeline_path = os.path.join(args.model_path, "pipeline.pth")
-    if os.path.exists(pipeline_path):
-        pipeline_dict = torch.load(pipeline_path, map_location=device)
-        print("LOADING PIPELINE WEIGHTS FOR CLASS: ", pipeline_dict["class"])
-        pipeline = P_BasicTransformer(models=models, opt=args)
-        filtered_dict_pipeline = {
-            k: v for k,
-            v in pipeline_dict.items() if k in pipeline.state_dict()}
-        pipeline.load_state_dict(filtered_dict_pipeline)
-    else:
-        print("PIPELINE NOT LOADED. FIX THE CODE RUN BELOW MANUALLY")
+    # pipeline_path = os.path.join(args.model_path, "pipeline.pth")
+    # if os.path.exists(pipeline_path):
+    #     pipeline_dict = torch.load(pipeline_path, map_location=device)
+    #     print("LOADING PIPELINE WEIGHTS FOR CLASS: ", pipeline_dict["class"])
+    #     pipeline = BasicTransformer_Old(models=None, opt=args)
+    #     filtered_dict_pipeline = {
+    #         k: v for k,
+    #         v in pipeline_dict.items() if k in pipeline.state_dict()}
+    #     print([k for k in pipeline_dict if k not in pipeline.state_dict()])
+    #     pipeline.load_state_dict(filtered_dict_pipeline)
+    #     pipeline.to(device)
+    #     pipeline.eval()
+    # else:
+    #     print("PIPELINE NOT LOADED. FIX THE CODE RUN BELOW MANUALLY")
 
     model_name = os.path.basename(os.path.dirname(args.model_path))
 
@@ -265,6 +289,26 @@ def test(args):
             # outputs["transform_topview"] = self.models["transform_decoder"](transform_feature)
             outputs = {}
             tv = pipeline.forward(inputs["color"])
+            # h_tv, w_tv =  tv.shape[2:]
+            
+            attn_map = pipeline.BasicTransformer.scores.cpu().detach()
+            residual_attn = torch.eye(attn_map.shape[1])
+            attn_map = attn_map + residual_attn
+            attn_map = attn_map / attn_map.sum(-1).unsqueeze(-1)
+            # attn_map = F.interpolate(attn_map.unsqueeze(1), size=(h_tv * w_tv, h_tv * w_tv)).squeeze(1)
+            
+            grid_size = int(np.sqrt(attn_map.size(-1)))
+            
+            tv_scaled = torch.nn.Softmax(dim=1)(F.interpolate(tv, size=(grid_size, grid_size)))
+            pred_scaled = torch.argmax(tv_scaled.detach(), dim=1)
+            
+            occ = attn_map.reshape(-1, attn_map.shape[-1])[pred_scaled.reshape(-1) == 1, :]
+            occ = (torch.sum(occ, dim=0)/occ.shape[0]).reshape(grid_size, grid_size)
+            occ = occ.cpu().detach()
+            
+            free = attn_map.reshape(-1, attn_map.shape[-1])[pred_scaled.reshape(-1) == 2, :]
+            free = (torch.sum(free, dim=0)/free.shape[0]).reshape(grid_size, grid_size)
+            free = free.cpu().detach()
 
             if args.grad_cam == True:
                 with torch.enable_grad():
@@ -299,6 +343,28 @@ def test(args):
                 os.makedirs(os.path.dirname(output_path), exist_ok=True)
                 true_top_view = pred.astype(np.uint8) * 127
                 cv2.imwrite(output_path, true_top_view)
+                
+                # Log Attention maps
+                bev_dir = 'attention'
+                rgb = invnormalize_imagenet(inputs["color"].squeeze(0)).permute(1,2,0).cpu().detach()
+                rgb = np.clip((rgb).numpy(), a_min=0, a_max=1)
+                
+                outpath = os.path.join(args.out_dir, model_name, folder, camera_pose, bev_dir, f'occupied_{fileidx}.png')
+                occ = F.interpolate(occ.reshape(1,1,*occ.shape), size=(rgb.shape[:2])).squeeze(0) #.permute(1,2,0)
+                # occ = occ * rgb
+                occ = (occ - occ.min()) / (occ.max() - occ.min())
+                occ = show_cam_on_image(rgb, occ.numpy()[0], use_rgb=True)
+                # occ = (occ * rgb * 255).numpy().astype(np.uint8)
+                os.makedirs(os.path.dirname(outpath), exist_ok=True)
+                cv2.imwrite(outpath, occ)
+                
+                outpath = os.path.join(args.out_dir, model_name, folder, camera_pose, bev_dir, f'free_{fileidx}.png')
+                free = F.interpolate(free.reshape(1,1,*free.shape), size=(rgb.shape[:2])).squeeze(0) #.permute(1,2,0)
+                free = (free - free.min()) / (free.max() - free.min())
+                # free = (free * rgb * 255).numpy().astype(np.uint8)                
+                free = show_cam_on_image(rgb, free.numpy()[0], use_rgb=True)
+                os.makedirs(os.path.dirname(outpath), exist_ok=True)
+                cv2.imwrite(outpath, free)
 
                 if (("rgb_cam", "unknown", 0) in outputs):
                     for sem_class in ["unknown", "occupied", "free"]:

@@ -13,7 +13,7 @@ import matplotlib.cm as mpl_color_map
 from crossView.CycledViewProjection import TransformModule
 
 
-class BasicTransformer(nn.Module):
+class  BasicTransformer(nn.Module):
     def __init__(self, patch_size, in_dim):
         super(BasicTransformer, self).__init__()
         
@@ -29,6 +29,8 @@ class BasicTransformer(nn.Module):
         self.merge1 = nn.Conv2d(in_channels=in_dim * 2, out_channels=in_dim, kernel_size=1)
         self.merge2 = nn.Conv2d(in_channels=in_dim * 2, out_channels=in_dim, kernel_size=1)
         self.softmax = nn.Softmax(dim=-1)
+        
+        self.scores = None
 
     def forward(self, front_x):
         features = self.mpl_head1(front_x)
@@ -51,6 +53,9 @@ class BasicTransformer(nn.Module):
         front_res = self.mpl_head2(T)
 
         output = self.merge2(torch.cat((front_res, V), dim=1)) # Skip connection 2
+        
+        self.scores = energy
+        
         return output
 
 

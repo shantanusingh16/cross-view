@@ -476,14 +476,14 @@ class Gibson4Dataset(data.Dataset):
     def get_boundary(self, folder, frame_index, camera_pose, do_flip):
 
         full_bev = cv2.imread(os.path.join(self.data_path, folder, '0', camera_pose, "map", str(frame_index) + ".png"), -1)
-        full_bev = full_bev[-64:, full_bev.shape[1]//2 - 32: full_bev.shape[1]//2 + 32]
-        # full_bev = full_bev[-101:, full_bev.shape[1]//2 - 51: full_bev.shape[1]//2 + 51]        
+        # full_bev = full_bev[-64:, full_bev.shape[1]//2 - 32: full_bev.shape[1]//2 + 32]
+        full_bev = full_bev[-101:, full_bev.shape[1]//2 - 51: full_bev.shape[1]//2 + 51]        
         
         partial_tv = cv2.imread(os.path.join(self.bev_dir, folder, camera_pose, "partial_occ", str(frame_index) + ".png"), -1)
         partial_tv[partial_tv == 127] = 1
         partial_tv[partial_tv == 255] = 2
-        partial_tv = partial_tv[-64:, partial_tv.shape[1]//2 - 32: partial_tv.shape[1]//2 + 32]
-        # partial_tv = partial_tv[-101:, partial_tv.shape[1]//2 - 51: partial_tv.shape[1]//2 + 51]
+        # partial_tv = partial_tv[-64:, partial_tv.shape[1]//2 - 32: partial_tv.shape[1]//2 + 32]
+        partial_tv = partial_tv[-101:, partial_tv.shape[1]//2 - 51: partial_tv.shape[1]//2 + 51]
 
         full_bev[partial_tv == 0] = 127 # Set unknown to occupied
         

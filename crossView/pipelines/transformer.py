@@ -35,7 +35,12 @@ class P_BasicTransformer(nn.Module):
         self.decoder = crossView.Decoder(
             self.encoder.resnet_encoder.num_ch_enc, self.opt.num_class, self.opt.occ_map_size, in_features=128) # models["decoder"]
 
-        self.bottleneck = [self.basic_transformer.to_out]
+        self.scores = None
+
+        self.bottleneck = [self.basic_transformer]
+
+    def get_attention_map(self):
+        return self.scores.mean(dim=1)
 
     def forward(self, x):
         features = self.encoder(x)
@@ -46,6 +51,7 @@ class P_BasicTransformer(nn.Module):
         features = self.basic_transformer(features, features, features)  # BasicTransformer
 
         topview = self.decoder(features)
+        self.scores = self.basic_transformer.scores
 
         return topview
 

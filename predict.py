@@ -181,38 +181,38 @@ def test(args):
     #     models[key].to(device)
     #     models[key].eval()
     
-    pipeline = BasicTransformer_Old(models=None, opt=args)
-    for filename in os.listdir(args.model_path):
-        k = filename.replace(".pth", "")
-        if hasattr(pipeline, k):
-            weights = torch.load(os.path.join(args.model_path, filename), map_location=device)
-            model = getattr(pipeline, k)
-            print(k, [x for x in model.state_dict() if x not in weights])
-            filtered_weights = {x: y for x, y in weights.items() if x in model.state_dict()}
-            mk, uk = model.load_state_dict(filtered_weights)
-            print(mk, uk)
+    # pipeline = BasicTransformer_Old(models=None, opt=args)
+    # for filename in os.listdir(args.model_path):
+    #     k = filename.replace(".pth", "")
+    #     if hasattr(pipeline, k):
+    #         weights = torch.load(os.path.join(args.model_path, filename), map_location=device)
+    #         model = getattr(pipeline, k)
+    #         print(k, [x for x in model.state_dict() if x not in weights])
+    #         filtered_weights = {x: y for x, y in weights.items() if x in model.state_dict()}
+    #         mk, uk = model.load_state_dict(filtered_weights)
+    #         print(mk, uk)
         
-    pipeline.to(device)
-    pipeline.eval()
+    # pipeline.to(device)
+    # pipeline.eval()
     
-    pipeline_state_dict = pipeline.state_dict()
-    pipeline_state_dict["class"] = type(pipeline).__name__
-    torch.save(pipeline_state_dict, os.path.join(args.model_path, "pipeline.pth"))
+    # pipeline_state_dict = pipeline.state_dict()
+    # pipeline_state_dict["class"] = type(pipeline).__name__
+    # torch.save(pipeline_state_dict, os.path.join(args.model_path, "pipeline.pth"))
 
-    # pipeline_path = os.path.join(args.model_path, "pipeline.pth")
-    # if os.path.exists(pipeline_path):
-    #     pipeline_dict = torch.load(pipeline_path, map_location=device)
-    #     print("LOADING PIPELINE WEIGHTS FOR CLASS: ", pipeline_dict["class"])
-    #     pipeline = BasicTransformer_Old(models=None, opt=args)
-    #     filtered_dict_pipeline = {
-    #         k: v for k,
-    #         v in pipeline_dict.items() if k in pipeline.state_dict()}
-    #     print([k for k in pipeline_dict if k not in pipeline.state_dict()])
-    #     pipeline.load_state_dict(filtered_dict_pipeline)
-    #     pipeline.to(device)
-    #     pipeline.eval()
-    # else:
-    #     print("PIPELINE NOT LOADED. FIX THE CODE RUN BELOW MANUALLY")
+    pipeline_path = os.path.join(args.model_path, "pipeline.pth")
+    if os.path.exists(pipeline_path):
+        pipeline_dict = torch.load(pipeline_path, map_location=device)
+        print("LOADING PIPELINE WEIGHTS FOR CLASS: ", pipeline_dict["class"])
+        pipeline = P_BasicTransformer(models=None, opt=args)
+        filtered_dict_pipeline = {
+            k: v for k,
+            v in pipeline_dict.items() if k in pipeline.state_dict()}
+        print([k for k in pipeline_dict if k not in pipeline.state_dict()])
+        pipeline.load_state_dict(filtered_dict_pipeline)
+        pipeline.to(device)
+        pipeline.eval()
+    else:
+        print("PIPELINE NOT LOADED. FIX THE CODE RUN BELOW MANUALLY")
 
     model_name = os.path.basename(os.path.dirname(args.model_path))
 
@@ -291,7 +291,7 @@ def test(args):
             tv = pipeline.forward(inputs["color"])
             # h_tv, w_tv =  tv.shape[2:]
             
-            attn_map = pipeline.BasicTransformer.scores.cpu().detach()
+            attn_map = pipeline.get_attention_map().cpu().detach()
             residual_attn = torch.eye(attn_map.shape[1])
             attn_map = attn_map + residual_attn
             attn_map = attn_map / attn_map.sum(-1).unsqueeze(-1)
@@ -350,7 +350,7 @@ def test(args):
                 rgb = np.clip((rgb).numpy(), a_min=0, a_max=1)
                 
                 outpath = os.path.join(args.out_dir, model_name, folder, camera_pose, bev_dir, f'occupied_{fileidx}.png')
-                occ = F.interpolate(occ.reshape(1,1,*occ.shape), size=(rgb.shape[:2])).squeeze(0) #.permute(1,2,0)
+                occ = F.interpolate(occ.reshape(1,1,*occ.shape), size=(rgb.shape[:2]), mode='bicubic').squeeze(0) #.permute(1,2,0)
                 # occ = occ * rgb
                 occ = (occ - occ.min()) / (occ.max() - occ.min())
                 occ = show_cam_on_image(rgb, occ.numpy()[0], use_rgb=True)
@@ -359,7 +359,7 @@ def test(args):
                 cv2.imwrite(outpath, occ)
                 
                 outpath = os.path.join(args.out_dir, model_name, folder, camera_pose, bev_dir, f'free_{fileidx}.png')
-                free = F.interpolate(free.reshape(1,1,*free.shape), size=(rgb.shape[:2])).squeeze(0) #.permute(1,2,0)
+                free = F.interpolate(free.reshape(1,1,*free.shape), size=(rgb.shape[:2]), mode='bicubic').squeeze(0) #.permute(1,2,0)
                 free = (free - free.min()) / (free.max() - free.min())
                 # free = (free * rgb * 255).numpy().astype(np.uint8)                
                 free = show_cam_on_image(rgb, free.numpy()[0], use_rgb=True)

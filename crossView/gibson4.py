@@ -264,6 +264,8 @@ class Gibson4Dataset(data.Dataset):
     
         if os.path.exists(self.floor_path):
             inputs["discr"] = self.get_floor()
+        else:
+            inputs["discr"] = self.get_bev(folder, frame_index, camera_pose, do_flip)
 
         if os.path.exists(self.semantics_dir):
             semantics =  np.expand_dims(self.get_semantics(folder, frame_index, camera_pose, do_flip), 0)
@@ -470,8 +472,8 @@ class Gibson4Dataset(data.Dataset):
     def get_floor(self):
         map_file = np.random.choice(os.listdir(self.floor_path))
         map_path = os.path.join(self.floor_path, map_file)
-        osm = self.loader(map_path)
-        return osm
+        floor = self.loader(map_path)
+        return floor
 
     def get_boundary(self, folder, frame_index, camera_pose, do_flip):
 

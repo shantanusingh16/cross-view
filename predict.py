@@ -232,7 +232,7 @@ def test(args):
             args.split,
             "val_files.txt")
 
-    test_filenames = readlines(fpath)
+    test_filenames = readlines(fpath)[:100]
 
     val_dataset = dataset(args, test_filenames, is_train=False)
 
@@ -303,11 +303,13 @@ def test(args):
             pred_scaled = torch.argmax(tv_scaled.detach(), dim=1)
             
             occ = attn_map.reshape(-1, attn_map.shape[-1])[pred_scaled.reshape(-1) == 1, :]
-            occ = (torch.sum(occ, dim=0)/occ.shape[0]).reshape(grid_size, grid_size)
+            occ = torch.mean(occ, dim=0).reshape(grid_size, grid_size)
+            # occ = (torch.sum(occ, dim=0)/occ.shape[0]).reshape(grid_size, grid_size)
             occ = occ.cpu().detach()
             
             free = attn_map.reshape(-1, attn_map.shape[-1])[pred_scaled.reshape(-1) == 2, :]
-            free = (torch.sum(free, dim=0)/free.shape[0]).reshape(grid_size, grid_size)
+            free = torch.mean(free, dim=0).reshape(grid_size, grid_size)
+            # free = (torch.sum(free, dim=0)/free.shape[0]).reshape(grid_size, grid_size)
             free = free.cpu().detach()
 
             if args.grad_cam == True:
@@ -348,23 +350,26 @@ def test(args):
                 bev_dir = 'attention'
                 rgb = invnormalize_imagenet(inputs["color"].squeeze(0)).permute(1,2,0).cpu().detach()
                 rgb = np.clip((rgb).numpy(), a_min=0, a_max=1)
+
+                h, w, c = rgb.shape
                 
-                outpath = os.path.join(args.out_dir, model_name, folder, camera_pose, bev_dir, f'occupied_{fileidx}.png')
-                occ = F.interpolate(occ.reshape(1,1,*occ.shape), size=(rgb.shape[:2]), mode='bicubic').squeeze(0) #.permute(1,2,0)
-                # occ = occ * rgb
-                occ = (occ - occ.min()) / (occ.max() - occ.min())
+                occ = F.interpolate(occ.reshape(1,1,*occ.shape), size=(h, w), mode='bicubic').squeeze(0) #.permute(1,2,0)
+                occ = 1 - (occ - occ.min()) / (occ.max() - occ.min())
+                # occ = occ / torch.sum(occ)
                 occ = show_cam_on_image(rgb, occ.numpy()[0], use_rgb=True)
-                # occ = (occ * rgb * 255).numpy().astype(np.uint8)
-                os.makedirs(os.path.dirname(outpath), exist_ok=True)
-                cv2.imwrite(outpath, occ)
                 
-                outpath = os.path.join(args.out_dir, model_name, folder, camera_pose, bev_dir, f'free_{fileidx}.png')
-                free = F.interpolate(free.reshape(1,1,*free.shape), size=(rgb.shape[:2]), mode='bicubic').squeeze(0) #.permute(1,2,0)
-                free = (free - free.min()) / (free.max() - free.min())
-                # free = (free * rgb * 255).numpy().astype(np.uint8)                
+                free = F.interpolate(free.reshape(1,1,*free.shape), size=(h, w), mode='bicubic').squeeze(0) #.permute(1,2,0)
+                free = 1 - (free - free.min()) / (free.max() - free.min()) 
+                # free = free / torch.sum(free)
                 free = show_cam_on_image(rgb, free.numpy()[0], use_rgb=True)
+
+                outpath = os.path.join(args.out_dir, model_name, folder, camera_pose, bev_dir, f'{fileidx}.png')
                 os.makedirs(os.path.dirname(outpath), exist_ok=True)
-                cv2.imwrite(outpath, free)
+
+                combined = np.zeros((h, w*2 + 10, 3), dtype=np.uint8)
+                combined[:, :w, :] = occ
+                combined[:, w+10:, :] = free
+                cv2.imwrite(outpath, combined)
 
                 if (("rgb_cam", "unknown", 0) in outputs):
                     for sem_class in ["unknown", "occupied", "free"]:

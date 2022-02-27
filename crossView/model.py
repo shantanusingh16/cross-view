@@ -10,6 +10,8 @@ from torch.nn.utils import spectral_norm
 from .ResnetEncoder import ResnetEncoder
 import matplotlib.pyplot as PLT
 
+import crossView
+
 # Utils
 class double_conv(nn.Module):
     """(conv => BN => ReLU) * 2"""
@@ -320,3 +322,170 @@ class FeedForward(nn.Module):
         if self.skip_conn:
             out = out + x
         return out.reshape((B, C, H, W))
+
+##################### DISCRIMINATOR #####################################
+
+
+class Discriminator(nn.Module):
+    """
+    A patch discriminator used to regularize the decoder
+    in order to produce layouts close to the true data distribution
+    """
+    def __init__(self):
+        super(Discriminator, self).__init__()
+        self.main = nn.Sequential(
+            # input is (nc) x 64 x 64
+            nn.Conv2d(3, 8, 3, 2, 1, 1, bias=False),
+            nn.LeakyReLU(0.2, inplace=True),
+            # state size. (ndf) x 32 x 32
+            nn.Conv2d(8, 16, 3, 2, 1, 1, bias=False),
+            nn.BatchNorm2d(16),
+            nn.LeakyReLU(0.2, inplace=True),
+            # state size. (ndf*2) x 16 x 16
+            nn.Conv2d(16, 32, 3, 2, 1, 1, bias=False),
+            nn.BatchNorm2d(32),
+            nn.LeakyReLU(0.2, inplace=True),
+            # state size. (ndf*4) x 8 x 8
+            nn.Conv2d(32, 8, 3, 2, 1, 1, bias=False),
+            nn.BatchNorm2d(8),
+            nn.LeakyReLU(0.2, inplace=True),
+            # state size. (ndf*8) x 4 x 4
+            nn.Conv2d(8, 1, 3, 1, 1, bias=False),
+            nn.Sigmoid()
+        )
+
+    def forward(self, x):
+        """
+        Parameters
+        ----------
+        x : torch.FloatTensor
+            Batch of output Layouts
+            | Shape: (batch_size, 2, occ_map_size, occ_map_size)
+        Returns
+        -------
+        x : torch.FloatTensor
+            Patch output of the Discriminator
+            | Shape: (batch_size, 1, occ_map_size/16, occ_map_size/16)
+        """
+
+        return self.main(x)
+
+class DiscriminatorAttention(nn.Module):
+    """
+    A patch discriminator used to regularize the decoder
+    in order to produce layouts close to the true data distribution
+    """
+    def __init__(self):
+        super(DiscriminatorAttention, self).__init__()
+        self.main = nn.Sequential(
+            # input is (nc) x 64 x 64
+            nn.Conv2d(3, 8, 3, 2, 1, 1, bias=False),
+            nn.LeakyReLU(0.2, inplace=True),
+            # state size. (ndf) x 32 x 32
+            nn.Conv2d(8, 16, 3, 2, 1, 1, bias=False),
+            nn.BatchNorm2d(16),
+            nn.LeakyReLU(0.2, inplace=True),
+            # state size. (ndf*2) x 16 x 16
+            nn.Conv2d(16, 32, 3, 2, 1, 1, bias=False),
+            nn.BatchNorm2d(32),
+            nn.LeakyReLU(0.2, inplace=True),
+        )
+
+        self.attention = crossView.MultiheadAttention(None, 32, 4, 32)
+
+        self.main2 = nn.Sequential(
+            # state size. (ndf*4) x 8 x 8
+            nn.Conv2d(32, 8, 3, 2, 1, 1, bias=False),
+            nn.BatchNorm2d(8),
+            nn.LeakyReLU(0.2, inplace=True),
+            # state size. (ndf*8) x 4 x 4
+            nn.Conv2d(8, 1, 3, 1, 1, bias=False),
+            nn.Sigmoid()
+        )
+
+    def forward(self, x):
+        """
+        Parameters
+        ----------
+        x : torch.FloatTensor
+            Batch of output Layouts
+            | Shape: (batch_size, 2, occ_map_size, occ_map_size)
+        Returns
+        -------
+        x : torch.FloatTensor
+            Patch output of the Discriminator
+            | Shape: (batch_size, 1, occ_map_size/16, occ_map_size/16)
+        """
+
+        feat = self.main(x)
+        feat = self.attention(feat, feat, feat)
+        out = self.main2(feat)
+
+        return out
+
+class ConditionalDiscriminator(nn.Module):
+    """
+    A patch discriminator used to regularize the decoder
+    in order to produce layouts close to the true data distribution
+    """
+    def __init__(self):
+        super(ConditionalDiscriminator, self).__init__()
+        self.layer1 = nn.Sequential(
+            # input is (nc) x 64 x 64
+            nn.Conv2d(4, 8, 3, 2, 1, 1, bias=False),
+            nn.LeakyReLU(0.2, inplace=True),
+        )
+
+        self.layer2 = nn.Sequential(
+            # state size. (ndf) x 32 x 32
+            nn.Conv2d(8, 16, 3, 2, 1, 1, bias=False),
+            nn.BatchNorm2d(16),
+            nn.LeakyReLU(0.2, inplace=True),
+        )
+
+        self.layer3 = nn.Sequential(
+            # state size. (ndf*2) x 16 x 16
+            nn.Conv2d(16, 32, 3, 2, 1, 1, bias=False),
+            nn.BatchNorm2d(32),
+            nn.LeakyReLU(0.2, inplace=True),
+        )
+
+        self.layer4 = nn.Sequential(
+            # state size. (ndf*4) x 8 x 8
+            nn.Conv2d(32, 8, 3, 2, 1, 1, bias=False),
+            nn.BatchNorm2d(8),
+            nn.LeakyReLU(0.2, inplace=True),
+        )
+
+        self.layer5 = nn.Sequential(
+            # state size. (ndf*8) x 4 x 4
+            nn.Conv2d(8, 1, 3, 1, 1, bias=False),
+            nn.Sigmoid()
+        )
+
+    def forward(self, x, y):
+        """
+        Parameters
+        ----------
+        x : torch.FloatTensor
+            Batch of output Layouts
+            | Shape: (batch_size, 2, occ_map_size, occ_map_size)
+        y : torch.FloatTensor
+            Batch of output Layouts
+            | Shape: (batch_size, 3, occ_map_size, occ_map_size)
+        Returns
+        -------
+        x : torch.FloatTensor
+            Patch output of the Discriminator
+            | Shape: (batch_size, 1, occ_map_size/16, occ_map_size/16)
+        """
+
+        img_input = torch.cat((x, y), 1) # Concatenate by channels
+
+        out1 = self.layer1(img_input)
+        out2 = self.layer2(out1)
+        out3 = self.layer3(out2)
+        out4 = self.layer4(out3)
+        result = self.layer5(out4)
+
+        return result, [out1, out2, out3, out4]

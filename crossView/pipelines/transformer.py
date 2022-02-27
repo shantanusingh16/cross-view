@@ -103,6 +103,10 @@ class BasicTransformer_Old(nn.Module):
             self.encoder.resnet_encoder.num_ch_enc, self.opt.num_class, self.opt.occ_map_size, in_features=128) # models["decoder"]
 
         self.bottleneck = [self.BasicTransformer.merge2]
+        self.scores = None
+
+    def get_attention_map(self):
+        return self.scores
 
 
     def forward(self, x):
@@ -111,6 +115,8 @@ class BasicTransformer_Old(nn.Module):
         b, c, h, w = features.shape
 
         features = self.BasicTransformer(features)  # BasicTransformer
+
+        self.scores = self.BasicTransformer.scores
 
         topview = self.decoder(features)
 

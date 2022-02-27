@@ -232,7 +232,7 @@ def test(args):
             args.split,
             "val_files.txt")
 
-    test_filenames = readlines(fpath)[:100]
+    test_filenames = readlines(fpath)
 
     val_dataset = dataset(args, test_filenames, is_train=False)
 
@@ -345,6 +345,11 @@ def test(args):
                 os.makedirs(os.path.dirname(output_path), exist_ok=True)
                 true_top_view = pred.astype(np.uint8) * 127
                 cv2.imwrite(output_path, true_top_view)
+
+                # Raw prob
+                outpath = os.path.join(args.out_dir, model_name, folder, camera_pose, 'prob', f'{fileidx}.npy')
+                os.makedirs(os.path.dirname(outpath), exist_ok=True)
+                np.save(outpath, tv.detach().cpu().numpy()[idx])
                 
                 # Log Attention maps
                 bev_dir = 'attention'

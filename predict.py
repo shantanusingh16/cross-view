@@ -26,7 +26,7 @@ from utils import mean_IU, mean_precision, invnormalize_imagenet
 from pytorch_grad_cam import GradCAM
 from pytorch_grad_cam.utils.image import show_cam_on_image
 
-from crossView.pipelines.transformer import P_BasicTransformer, BasicTransformer_Old
+from crossView.pipelines.transformer import MultiBlockTransformer, P_BasicTransformer, BasicTransformer_Old
 
 from crossView.grad_cam import SegmentationModelOutputWrapper, SemanticSegmentationTarget
 
@@ -203,7 +203,7 @@ def test(args):
     if os.path.exists(pipeline_path):
         pipeline_dict = torch.load(pipeline_path, map_location=device)
         print("LOADING PIPELINE WEIGHTS FOR CLASS: ", pipeline_dict["class"])
-        pipeline = P_BasicTransformer(models=None, opt=args)
+        pipeline = MultiBlockTransformer(models=None, opt=args, nblocks=6)
         filtered_dict_pipeline = {
             k: v for k,
             v in pipeline_dict.items() if k in pipeline.state_dict()}
@@ -291,7 +291,7 @@ def test(args):
             tv = pipeline.forward(inputs["color"])
             # h_tv, w_tv =  tv.shape[2:]
             
-            attn_map = pipeline.get_attention_map().cpu().detach()
+            attn_map = pipeline.get_attention_map().cpu().detach().mean(dim=1)
             residual_attn = torch.eye(attn_map.shape[1])
             attn_map = attn_map + residual_attn
             attn_map = attn_map / attn_map.sum(-1).unsqueeze(-1)
@@ -374,7 +374,7 @@ def test(args):
                 combined = np.zeros((h, w*2 + 10, 3), dtype=np.uint8)
                 combined[:, :w, :] = occ
                 combined[:, w+10:, :] = free
-                cv2.imwrite(outpath, combined)
+                cv2.imwrite(outpath, cv2.cvtColor(combined, cv2.COLOR_BGR2RGB))
 
                 if (("rgb_cam", "unknown", 0) in outputs):
                     for sem_class in ["unknown", "occupied", "free"]:
@@ -382,7 +382,7 @@ def test(args):
                         img = outputs[("rgb_cam", sem_class, 0)][idx].transpose(1,2,0)
                         outpath = os.path.join(args.out_dir, model_name, folder, camera_pose, bev_dir, '{}_{}.png'.format(sem_class, fileidx))
                         os.makedirs(os.path.dirname(outpath), exist_ok=True)
-                        cv2.imwrite(outpath, img)
+                        cv2.imwrite(outpath, cv2.cvtColor(img, cv2.COLOR_BGR2RGB))
 
                         bev_dir = 'grad_grayscale'
                         img = outputs[("grayscale_cam", sem_class, 0)][idx].transpose(1,2,0)

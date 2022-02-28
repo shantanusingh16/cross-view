@@ -76,7 +76,10 @@ class MultiBlockTransformer(nn.Module):
             self.encoder.resnet_encoder.num_ch_enc, self.opt.num_class, self.opt.occ_map_size, in_features=128) # models["decoder"]
 
         self.bottleneck = [blocks[-1]]
+        self.scores = []
         
+    def get_attention_map(self):
+        return self.scores
     
     def forward(self, x):
         features = self.encoder(x)
@@ -87,6 +90,8 @@ class MultiBlockTransformer(nn.Module):
         features = self.transformer(features) 
         
         topview = self.decoder(features)
+
+        self.scores = self.transformer._modules['0'].scores
 
         return topview
     

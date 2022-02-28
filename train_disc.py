@@ -440,7 +440,7 @@ class Trainer:
         if os.path.exists(path):
             model_dict = self.pipeline.state_dict()
             pretrained_dict = torch.load(path)
-            print("LOADING PIPELINE WEIGHTS FOR CLASS: ", pretrained_dict["class"])
+            print("LOADING PIPELINE WEIGHTS FOR CLASS: ", pretrained_dict.pop('class'))
             if 'epoch' in pretrained_dict:
                 self.start_epoch = pretrained_dict['epoch']
             # pretrained_dict = {k: v for k, v in pretrained_dict.items() if k in model_dict}
@@ -454,7 +454,7 @@ class Trainer:
         if os.path.exists(path):
             model_dict = self.discriminator.state_dict()
             pretrained_dict = torch.load(path)
-            print("LOADING DISCRIMINATOR WEIGHTS FOR CLASS: ", pretrained_dict["class"])
+            print("LOADING DISCRIMINATOR WEIGHTS FOR CLASS: ", pretrained_dict.pop('class'))
             model_dict.update(pretrained_dict)
             mk, uk = self.discriminator.load_state_dict(model_dict)
             print(mk, uk)
@@ -462,7 +462,7 @@ class Trainer:
             raise Exception("No discriminator weights found")
 
         # loading adam state
-        if self.opt.load_weights_folder == "":
+        if self.opt.load_weights_folder != "":
             optimizer_load_path = os.path.join(
                 self.opt.load_weights_folder, "adam.pth")
             if os.path.isfile(optimizer_load_path):
@@ -474,7 +474,7 @@ class Trainer:
 
         
         # loading adam state
-        if self.opt.load_weights_folder == "":
+        if self.opt.load_weights_folder != "":
             optimizer_load_path = os.path.join(
                 self.opt.load_weights_folder, "disc_adam.pth")
             if os.path.isfile(optimizer_load_path):

@@ -62,8 +62,8 @@ class MultiheadAttention(nn.Module):
         self.scores = attn
 
         T = torch.matmul(attn, v)
-        out = rearrange(T, 'b h n d -> b n (h d)') + x_value
-        out = self.to_out(out)
+        out = rearrange(T, 'b h n d -> b n (h d)')
+        out = self.to_out(out) + x_value
         out = out.reshape((B, C, H, W))
         return out
 

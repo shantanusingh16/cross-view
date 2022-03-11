@@ -238,8 +238,6 @@ class Trainer:
         valid_batches = 0
         for batch_idx, inputs in tqdm.tqdm(enumerate(self.train_loader)):
             outputs, losses = self.process_batch(inputs)
-            self.model_optimizer.zero_grad()
-            self.model_optimizer_D.zero_grad()
 
             if torch.isnan(losses["loss"]) or torch.isinf(losses["loss"]):
                 self.log.write("NaN loss at Epoch: %d Batch_idx: %d Filenames: %s \n" % (self.epoch, batch_idx, ",".join(inputs["filename"])))
@@ -252,19 +250,24 @@ class Trainer:
 
             fake_pred = self.discriminator(outputs["topview"])
             real_pred = self.discriminator(target_bev)
-            losses["loss_G"] = self.criterion_d(fake_pred.clone(), self.valid) + self.criterion_d(real_pred.clone(), self.valid)
-            losses["loss_discr"] = self.criterion_d(fake_pred.clone(), self.fake) + self.criterion_d(real_pred.clone(), self.valid)
+            losses["loss_G"] = self.criterion_d(fake_pred, self.valid) #+ self.criterion_d(real_pred.clone(), self.valid)
+            losses["loss_discr"] = (self.criterion_d(fake_pred.detach(), self.fake) + self.criterion_d(real_pred, self.valid))/2
 
 
             if self.epoch >= self.opt.discr_start_epoch: 
-                losses["loss"] = 0.01 * losses["loss_G"] + losses["loss"]
+                losses["loss"] = 0.1 * losses["loss_G"] + losses["loss"]
 
-                losses["loss_discr"].backward(retain_graph=True)
-                losses["loss"].backward()
-
+                self.model_optimizer.zero_grad()
+                losses["loss"].backward(retain_graph=True)
                 self.model_optimizer.step()
+
+                self.model_optimizer_D.zero_grad()
+                losses["loss_discr"].backward()
                 self.model_optimizer_D.step()
+
+
             else:
+                self.model_optimizer.zero_grad()
                 losses["loss"].backward()
                 self.model_optimizer.step()
 

@@ -123,7 +123,7 @@ class Trainer:
         # self.models["transform_decoder"] = crossView.Decoder(
         #     self.models["encoder"].resnet_encoder.num_ch_enc, self.opt.num_class, self.opt.occ_map_size, "transform_decoder")
 
-        self.pipeline = MultiBlockTransformer(None, self.opt, 6)
+        self.pipeline = P_BasicTransformer(None, self.opt)
         self.pipeline.to(self.device)
         self.base_parameters_to_train += list(self.pipeline.parameters())
 
@@ -354,7 +354,7 @@ class Trainer:
             "boundary": 0.0,
             "loss_discr": 0.0
         }
-        accumulation_steps = 8
+        accumulation_steps = 100
         valid_batches = 0
         for batch_idx, inputs in tqdm.tqdm(enumerate(self.train_loader)):
             outputs, losses = self.process_batch(inputs)
@@ -367,15 +367,21 @@ class Trainer:
 
             valid_batches += 1
 
-            losses["loss"] = losses["loss"] / accumulation_steps
+            losses["loss"] = losses["loss"] #/ accumulation_steps
             losses["loss"].backward()
-
-            # if ((batch_idx + 1) % accumulation_steps) == 0:
             self.model_optimizer.step()
-            #     self.model_optimizer.zero_grad()
 
             for loss_name in losses:
                 loss[loss_name] += losses[loss_name].item()
+
+            # if batch_idx % accumulation_steps == 0:
+            #     for log_idx in (0, 4):
+            #         # COLOR data
+            #         color = invnormalize_imagenet(inputs["color"][log_idx].detach().cpu())
+            #         color = cv2.resize(color.numpy().transpose((1,2,0)), dsize=(128, 128)).transpose((2, 0, 1))
+            #         self.writer.add_image(f"train_color_gt/{batch_idx}/{log_idx}", color, self.epoch)
+
+        
         # self.scheduler.step()
         for loss_name in loss:
             loss[loss_name] /= valid_batches

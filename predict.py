@@ -31,6 +31,11 @@ from crossView.pipelines.transformer import MultiBlockTransformer, P_BasicTransf
 from crossView.grad_cam import SegmentationModelOutputWrapper, SemanticSegmentationTarget
 
 
+COLORMAP_TOPVIEW = np.array([[93, 57, 154], [67, 232, 172], [248, 255, 144]], dtype=np.uint8) 
+
+COLORMAP_TOPVIEW = np.array([[0, 0, 0], [127, 127, 127], [255, 255, 255]], dtype=np.uint8)
+
+
 def readlines(filename):
     """Read all the lines in a text file and return as a list
     """
@@ -288,8 +293,10 @@ def test(args):
             # tv = models["decoder"](features)
             # outputs["transform_topview"] = self.models["transform_decoder"](transform_feature)
             outputs = {}
-            tv = pipeline.forward(inputs["color"])
-            # h_tv, w_tv =  tv.shape[2:]
+            tv = pipeline.forward(inputs["color"]).cpu().detach()
+            h_tv, w_tv =  tv.shape[2:]
+
+            B, C, H, W = inputs["color"].shape
             
             attn_map = pipeline.get_attention_map().cpu().detach().mean(dim=1)
             residual_attn = torch.eye(attn_map.shape[1])
@@ -300,17 +307,33 @@ def test(args):
             grid_size = int(np.sqrt(attn_map.size(-1)))
             
             tv_scaled = torch.nn.Softmax(dim=1)(F.interpolate(tv, size=(grid_size, grid_size)))
-            pred_scaled = torch.argmax(tv_scaled.detach(), dim=1)
+            # pred_scaled = torch.argmax(tv_scaled.detach(), dim=1)
+            tv_flattened = tv_scaled.reshape((*tv_scaled.shape[:2], -1))
+
+            occ_max_idx = torch.argmax(tv_flattened[:, 1], dim=-1)
+            occ_tv_map = torch.zeros(attn_map.size(0), grid_size * grid_size, device=attn_map.device, dtype=torch.float)
+            occ_tv_map[torch.arange(attn_map.size(0)), occ_max_idx] = 1
+            occ_tv_map = F.interpolate(occ_tv_map.reshape(attn_map.size(0), 1, grid_size, grid_size), (h_tv, w_tv), mode='bicubic')
+            occ_pers_map = attn_map[torch.arange(attn_map.size(0)), occ_max_idx].reshape(attn_map.size(0), 1, grid_size, grid_size)
+            occ_pers_map = F.interpolate(occ_pers_map, (H, W), mode='bicubic')
+
+            free_max_idx = torch.argmax(tv_flattened[:, 2], dim=-1)
+            free_tv_map = torch.zeros(attn_map.size(0), grid_size * grid_size, device=attn_map.device, dtype=torch.float)
+            free_tv_map[torch.arange(attn_map.size(0)), free_max_idx] = 1
+            free_tv_map = F.interpolate(free_tv_map.reshape(attn_map.size(0), 1, grid_size, grid_size), (h_tv, w_tv), mode='bicubic')
+            free_pers_map = attn_map[torch.arange(attn_map.size(0)), free_max_idx].reshape(attn_map.size(0), 1, grid_size, grid_size)
+            free_pers_map = F.interpolate(free_pers_map, (H, W), mode='bicubic')
+
             
-            occ = attn_map.reshape(-1, attn_map.shape[-1])[pred_scaled.reshape(-1) == 1, :]
-            occ = torch.mean(occ, dim=0).reshape(grid_size, grid_size)
-            # occ = (torch.sum(occ, dim=0)/occ.shape[0]).reshape(grid_size, grid_size)
-            occ = occ.cpu().detach()
+            # occ = attn_map.reshape(-1, attn_map.shape[-1])[pred_scaled.reshape(-1) == 1, :]
+            # occ = torch.mean(occ, dim=0).reshape(grid_size, grid_size)
+            # # occ = (torch.sum(occ, dim=0)/occ.shape[0]).reshape(grid_size, grid_size)
+            # occ = occ.cpu().detach()
             
-            free = attn_map.reshape(-1, attn_map.shape[-1])[pred_scaled.reshape(-1) == 2, :]
-            free = torch.mean(free, dim=0).reshape(grid_size, grid_size)
-            # free = (torch.sum(free, dim=0)/free.shape[0]).reshape(grid_size, grid_size)
-            free = free.cpu().detach()
+            # free = attn_map.reshape(-1, attn_map.shape[-1])[pred_scaled.reshape(-1) == 2, :]
+            # free = torch.mean(free, dim=0).reshape(grid_size, grid_size)
+            # # free = (torch.sum(free, dim=0)/free.shape[0]).reshape(grid_size, grid_size)
+            # free = free.cpu().detach()
 
             if args.grad_cam == True:
                 with torch.enable_grad():
@@ -346,35 +369,58 @@ def test(args):
                 true_top_view = pred.astype(np.uint8) * 127
                 cv2.imwrite(output_path, true_top_view)
 
-                # Raw prob
-                outpath = os.path.join(args.out_dir, model_name, folder, camera_pose, 'prob', f'{fileidx}.npy')
-                os.makedirs(os.path.dirname(outpath), exist_ok=True)
-                np.save(outpath, tv.detach().cpu().numpy()[idx])
+                # # Raw prob
+                # outpath = os.path.join(args.out_dir, model_name, folder, camera_pose, 'prob', f'{fileidx}.npy')
+                # os.makedirs(os.path.dirname(outpath), exist_ok=True)
+                # np.save(outpath, tv.detach().cpu().numpy()[idx])
                 
                 # Log Attention maps
                 bev_dir = 'attention'
-                rgb = invnormalize_imagenet(inputs["color"].squeeze(0)).permute(1,2,0).cpu().detach()
+                rgb = invnormalize_imagenet(inputs["color"][idx]).permute(1,2,0).cpu().detach()
                 rgb = np.clip((rgb).numpy(), a_min=0, a_max=1)
 
                 h, w, c = rgb.shape
-                
-                occ = F.interpolate(occ.reshape(1,1,*occ.shape), size=(h, w), mode='bicubic').squeeze(0) #.permute(1,2,0)
-                occ = 1 - (occ - occ.min()) / (occ.max() - occ.min())
-                # occ = occ / torch.sum(occ)
-                occ = show_cam_on_image(rgb, occ.numpy()[0], use_rgb=True)
-                
-                free = F.interpolate(free.reshape(1,1,*free.shape), size=(h, w), mode='bicubic').squeeze(0) #.permute(1,2,0)
-                free = 1 - (free - free.min()) / (free.max() - free.min()) 
-                # free = free / torch.sum(free)
-                free = show_cam_on_image(rgb, free.numpy()[0], use_rgb=True)
 
-                outpath = os.path.join(args.out_dir, model_name, folder, camera_pose, bev_dir, f'{fileidx}.png')
+                # Log occupied samples
+                outpath = os.path.join(args.out_dir, model_name, folder, camera_pose, bev_dir, f'occ_{fileidx}.png')
                 os.makedirs(os.path.dirname(outpath), exist_ok=True)
-
+                pers = show_cam_on_image(rgb, occ_pers_map[idx, 0], use_rgb=True)
+                color_tv = COLORMAP_TOPVIEW[true_top_view.reshape(-1)//127].reshape((128, 128, 3)).astype(np.float32) / 255
+                tv = cv2.resize(show_cam_on_image(color_tv, occ_tv_map[idx, 0]), (h, w), interpolation=cv2.INTER_CUBIC)
                 combined = np.zeros((h, w*2 + 10, 3), dtype=np.uint8)
-                combined[:, :w, :] = occ
-                combined[:, w+10:, :] = free
+                combined[:, :w, :] = pers
+                combined[:, w+10:, :] = tv
                 cv2.imwrite(outpath, cv2.cvtColor(combined, cv2.COLOR_BGR2RGB))
+
+
+                # Log free samples
+                outpath = os.path.join(args.out_dir, model_name, folder, camera_pose, bev_dir, f'free_{fileidx}.png')
+                os.makedirs(os.path.dirname(outpath), exist_ok=True)
+                pers = show_cam_on_image(rgb, free_pers_map[idx, 0], use_rgb=True)
+                color_tv = COLORMAP_TOPVIEW[true_top_view.reshape(-1)//127].reshape((128, 128, 3)).astype(np.float32) / 255
+                tv = cv2.resize(show_cam_on_image(color_tv, free_tv_map[idx, 0]), (h, w), interpolation=cv2.INTER_CUBIC)
+                combined = np.zeros((h, w*2 + 10, 3), dtype=np.uint8)
+                combined[:, :w, :] = pers
+                combined[:, w+10:, :] = tv
+                cv2.imwrite(outpath, cv2.cvtColor(combined, cv2.COLOR_BGR2RGB))
+                
+                # occ = F.interpolate(occ.reshape(1,1,*occ.shape), size=(h, w), mode='bicubic').squeeze(0) #.permute(1,2,0)
+                # occ = 1 - (occ - occ.min()) / (occ.max() - occ.min())
+                # # occ = occ / torch.sum(occ)
+                # occ = show_cam_on_image(rgb, occ.numpy()[0], use_rgb=True)
+                
+                # free = F.interpolate(free.reshape(1,1,*free.shape), size=(h, w), mode='bicubic').squeeze(0) #.permute(1,2,0)
+                # free = 1 - (free - free.min()) / (free.max() - free.min()) 
+                # # free = free / torch.sum(free)
+                # free = show_cam_on_image(rgb, free.numpy()[0], use_rgb=True)
+
+                # outpath = os.path.join(args.out_dir, model_name, folder, camera_pose, bev_dir, f'{fileidx}.png')
+                # os.makedirs(os.path.dirname(outpath), exist_ok=True)
+
+                # combined = np.zeros((h, w*2 + 10, 3), dtype=np.uint8)
+                # combined[:, :w, :] = occ
+                # combined[:, w+10:, :] = free
+                # cv2.imwrite(outpath, cv2.cvtColor(combined, cv2.COLOR_BGR2RGB))
 
                 if (("rgb_cam", "unknown", 0) in outputs):
                     for sem_class in ["unknown", "occupied", "free"]:

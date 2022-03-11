@@ -212,6 +212,10 @@ class Gibson4Dataset(data.Dataset):
                 inputs["color"] = self.normalize(img)
                 inputs["color_aug"] = self.normalize(color_aug(img))
 
+            if "cutmix" == k:
+                img =  self.resize(v)
+                inputs["cutmix"] = self.normalize(color_aug(img))
+
             if "depth_gt" == k:
                 inputs["depth_gt"] = self.crop_img(v)
 
@@ -232,6 +236,20 @@ class Gibson4Dataset(data.Dataset):
                     inputs[k] = np.transpose(self.ego_map_transform(image=v)['image'], (2, 0, 1))
                     inputs[k] = torch.tensor(inputs[k], dtype=torch.float32)
 
+        # After going through all keys, perform cutmix
+        if "cutmix" in inputs:
+            cutmix_src = inputs["color"]
+            cutmix_tgt = inputs["cutmix"]
+            # y_start = int(random.random() * 0.2 * self.height)
+            # y_end = np.clip(y_start + int((0.1 + random.random() * 0.2) * self.height), a_min=int(0.1 * self.height), a_max=int(0.3 * self.height))
+            # x_start = int(random.random() * 0.4 * self.height)
+            # x_end = np.clip(x_start + int((0.4 + random.random() * 0.4) * self.height), a_min=int(0.4 * self.height), a_max=self.height)
+            x_start, x_end = 0, self.height
+            y_start, y_end = 0, int((0.3 + random.random()*0.1)*self.height)
+            
+            cutmix_src[:, y_start:y_end, x_start:x_end] = cutmix_tgt[:, y_start:y_end, x_start:x_end]
+            inputs["color"] = cutmix_src.clone()
+
     def __len__(self):
         return len(self.filenames)
 
@@ -242,6 +260,7 @@ class Gibson4Dataset(data.Dataset):
 
         do_color_aug = self.is_train and random.random() > 0.5
         do_flip = self.is_train and random.random() > 0.5
+        do_cutmix = False #self.is_train and random.random() > 0.5
 
         line = self.filenames[index].split()
         folder = line[0]
@@ -249,6 +268,10 @@ class Gibson4Dataset(data.Dataset):
         frame_index = int(line[2])
 
         inputs["color"] = self.get_color(folder, frame_index, camera_pose, do_flip)
+
+        if do_cutmix:
+            f,c,i = random.choice(self.filenames).split()
+            inputs["cutmix"] = self.get_color(f,i,c, random.random() > 0.5)
 
         bev_key = "static" if self.is_train else "static_gt"
         inputs[bev_key] = self.get_bev(folder, frame_index, camera_pose, do_flip)
@@ -286,6 +309,9 @@ class Gibson4Dataset(data.Dataset):
             color_aug = (lambda x: x)
 
         self.preprocess(inputs, color_aug)
+
+        if "cutmix" in inputs:
+            del inputs["cutmix"]
 
         inputs["frame"] = torch.tensor(index)
         inputs["filename"] = self.filenames[index]
@@ -478,14 +504,14 @@ class Gibson4Dataset(data.Dataset):
     def get_boundary(self, folder, frame_index, camera_pose, do_flip):
 
         full_bev = cv2.imread(os.path.join(self.data_path, folder, '0', camera_pose, "map", str(frame_index) + ".png"), -1)
-        # full_bev = full_bev[-64:, full_bev.shape[1]//2 - 32: full_bev.shape[1]//2 + 32]
-        full_bev = full_bev[-101:, full_bev.shape[1]//2 - 51: full_bev.shape[1]//2 + 51]        
+        full_bev = full_bev[-64:, full_bev.shape[1]//2 - 32: full_bev.shape[1]//2 + 32]
+        # full_bev = full_bev[-101:, full_bev.shape[1]//2 - 51: full_bev.shape[1]//2 + 51]        
         
         partial_tv = cv2.imread(os.path.join(self.bev_dir, folder, camera_pose, "partial_occ", str(frame_index) + ".png"), -1)
         partial_tv[partial_tv == 127] = 1
         partial_tv[partial_tv == 255] = 2
-        # partial_tv = partial_tv[-64:, partial_tv.shape[1]//2 - 32: partial_tv.shape[1]//2 + 32]
-        partial_tv = partial_tv[-101:, partial_tv.shape[1]//2 - 51: partial_tv.shape[1]//2 + 51]
+        partial_tv = partial_tv[-64:, partial_tv.shape[1]//2 - 32: partial_tv.shape[1]//2 + 32]
+        # partial_tv = partial_tv[-101:, partial_tv.shape[1]//2 - 51: partial_tv.shape[1]//2 + 51]
 
         full_bev[partial_tv == 0] = 127 # Set unknown to occupied
         
@@ -515,7 +541,7 @@ class Gibson4Dataset(data.Dataset):
         occupied_map_full_grad = torch.nan_to_num(occupied_map_full_grad)
 
         occupied_map_full_grad[occupied_map_full_grad > 0] = 1.0
-        # occupied_map_full_grad[resized_partial_tv.unsqueeze(0) == 0] = 0 # Set boundary to 0 when in unknown regions of partial occupancy
+        occupied_map_full_grad[resized_partial_tv.unsqueeze(0) == 0] = 0 # Set boundary to 0 when in unknown regions of partial occupancy
 
         boundary = occupied_map_full_grad.squeeze().long()
 

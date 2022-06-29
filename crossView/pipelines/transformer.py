@@ -37,7 +37,7 @@ class P_BasicTransformer(nn.Module):
 
         self.scores = None
 
-        self.bottleneck = [self.basic_transformer]
+        self.bottleneck = [self.encoder.conv2]
 
     def get_attention_map(self):
         return self.scores.mean(dim=1)

@@ -97,7 +97,7 @@ class compute_losses(nn.Module):
                 inputs["boundary"])
 
         # losses["loss"] = losses["topview_loss"] + 0.001 * losses["transform_loss"] + 1 * losses["transform_topview_loss"]
-        losses["loss"] = losses["topview_loss"] # + 0.1*losses["boundary"]
+        losses["loss"] = losses["topview_loss"] #+ 0.1 * losses["boundary"]
         # losses["loss"] = losses["depth_loss"]
 
         return losses
@@ -131,4 +131,4 @@ class compute_losses(nn.Module):
         pred = torch.unsqueeze(occ_ch, dim=1)
         gradient_pred = torch.linalg.norm(2 * ktf.spatial_gradient(pred), dim=2) * torch.unsqueeze(explored_ch, dim=1)
         gradient_pred = torch.clamp(gradient_pred, min=0, max=1)
-        return nn.BCELoss()(gradient_pred.squeeze(1), gt)
+        return nn.L1Loss()(gradient_pred.squeeze(1), gt)

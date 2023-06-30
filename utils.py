@@ -6,6 +6,7 @@ import torch
 import torch.nn.functional as F
 from torch.autograd import Variable
 import matplotlib.pyplot as PLT
+from torchvision import transforms
 
 
 def to_cpu(tensor):
@@ -16,9 +17,33 @@ def _sigmoid(x):
     return torch.clamp(x.sigmoid_(), min=1e-4, max=1 - 1e-4)
 
 
-def mean_precision(eval_segm, gt_segm):
+def normalize_image(x, range=None):
+    """Rescale image pixels to span range [0, 1]
+    """
+    if range is not None and isinstance(range, (list, tuple)) and len(range) == 2:
+        mi, ma = range
+    else:
+        ma = float(x.max())
+        mi = float(x.min())
+    d = ma - mi if ma != mi else 1e5
+    if torch.is_tensor(x):
+        x = torch.clamp(x, mi.cpu().data, ma.cpu().data)
+    else:
+        x = np.clip(x, a_min=mi, a_max=ma)
+    return (x - mi) / d
+
+def invnormalize_imagenet(x):
+    inv_normalize = transforms.Normalize(
+            mean=[-0.485/0.229, -0.456/0.224, -0.406/0.255],
+            std=[1/0.229, 1/0.224, 1/0.255]
+        )
+    return inv_normalize(x)
+
+
+def mean_precision(eval_segm, gt_segm, n_cl):
     check_size(eval_segm, gt_segm)
-    cl, n_cl = extract_classes(gt_segm)
+    # cl, n_cl = extract_classes(gt_segm)
+    cl = np.arange(n_cl)
     eval_mask, gt_mask = extract_both_masks(eval_segm, gt_segm, cl, n_cl)
     mAP = [0] * n_cl
     for i, c in enumerate(cl):
@@ -35,15 +60,16 @@ def mean_precision(eval_segm, gt_segm):
     return mAP
 
 
-def mean_IU(eval_segm, gt_segm):
+def mean_IU(eval_segm, gt_segm, n_cl):
     '''
     (1/n_cl) * sum_i(n_ii / (t_i + sum_j(n_ji) - n_ii))
     '''
 
     check_size(eval_segm, gt_segm)
 
-    cl, n_cl = union_classes(eval_segm, gt_segm)
-    _, n_cl_gt = extract_classes(gt_segm)
+    # cl, n_cl = union_classes(eval_segm, gt_segm)
+    # _, n_cl_gt = extract_classes(gt_segm)
+    cl = np.arange(n_cl)
     eval_mask, gt_mask = extract_both_masks(eval_segm, gt_segm, cl, n_cl)
 
     IU = list([0]) * n_cl
@@ -69,6 +95,32 @@ def mean_IU(eval_segm, gt_segm):
 
     # print('IU', IU)
     return IU
+
+def compute_depth_errors(pred, gt, mask=None):
+    """Computation of error metrics between predicted and ground truth depths
+    """
+    if mask is None:
+        mask = np.ones_like(gt) == 1
+        
+    gt = gt[mask] + 1e-6
+    pred = pred[mask] + 1e-6
+        
+    thresh = np.maximum((gt / pred), (pred / gt))
+    a1 = (thresh < 1.25     ).mean()
+    a2 = (thresh < 1.25 ** 2).mean()
+    a3 = (thresh < 1.25 ** 3).mean()
+
+    rmse = (gt - pred) ** 2
+    rmse = np.sqrt(rmse.mean())
+
+    rmse_log = (np.log(gt) - np.log(pred)) ** 2
+    rmse_log = np.sqrt(rmse_log.mean())
+
+    abs_rel = np.mean(np.abs(gt - pred) / gt)
+
+    sq_rel = np.mean(((gt - pred) ** 2) / gt)
+
+    return abs_rel, sq_rel, rmse, rmse_log, a1, a2, a3
 
 
 '''

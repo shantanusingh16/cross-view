@@ -86,56 +86,14 @@ class Trainer:
         if self.seed != 0:
             self.set_seed()  # set seed
 
-        # Initializing models
-        # self.pos_emb1D = torch.nn.Parameter(torch.randn(1, 128, 64), requires_grad=True)
-        # self.base_parameters_to_train.append(self.pos_emb1D)
-
-        # self.models["encoder"] = crossView.Encoder(18, self.opt.height, self.opt.width, True)
-        # self.models["BasicTransformer"] = crossView.BasicTransformer(8, 128)
-        # self.models["BasicTransformer2"] = crossView.BasicTransformer2(8, 128)
-        # self.models["BasicTransformer"] = crossView.MultiheadAttention(None, 128, 4, 32)
-        
-        
-        # if self.opt.chandrakar_input_dir != "None":
-        #     self.multimodal_input = True
-        #     # self.models["ChandrakarEncoder"] = crossView.ChandrakarEncoder(2, [4,4,2,2], 16)
-
-        #     # self.models["ChandrakarEncoder"] = crossView.ChandrakarEncoder(1, [2,2,2,2], 16)
-        #     # self.models['CycledViewProjectionMultimodal'] = crossView.CycledViewProjectionMultimodal(in_dim=8, in_channels=128)
-
-        #     self.models["ChandrakarEncoder"] = crossView.Encoder(18, self.opt.height, self.opt.width, False, False, 2)
-
-        #     # To project the chandrakar features from 1 ch to 128 ch (same as resnet dim)
-        #     # lambda x: rearrange(x, "b c (x p_x) (y p_y) -> b (p_x p_y c) x y", p_x=patch_size, p_y=patch_size)
-        #     # self.models["ChandrakarEncoder"] = crossView.ChandrakarEncoder(1, [2,2,1,1], 16)
-        #     # self.models["ChandrakarAttn"] = crossView.MultiheadAttention(None, 128, 4, 32)
-        # else:
-        #     self.multimodal_input = False
-
-        # self.models["MergeMultimodal"] = crossView.MergeMultimodal(128, 2)
-        # self.models["DepthEncoder"] = crossView.Encoder(18, self.opt.height, self.opt.width, False, False, 1)
-
-        # self.models['CycledViewProjection'] = crossView.CycledViewProjection(in_dim=8)
-        # self.models["CrossViewTransformer"] = crossView.CrossViewTransformer(128)
-
-        # self.models["decoder"] = crossView.Decoder(
-        #     self.models["encoder"].resnet_encoder.num_ch_enc, self.opt.num_class, self.opt.occ_map_size, in_features=128)
-        # self.models["transform_decoder"] = crossView.Decoder(
-        #     self.models["encoder"].resnet_encoder.num_ch_enc, self.opt.num_class, self.opt.occ_map_size, "transform_decoder")
-
         self.pipeline = P_BasicTransformer(None, self.opt)
         self.pipeline.to(self.device)
         self.base_parameters_to_train += list(self.pipeline.parameters())
 
-        # for key in self.models.keys():
-        #     self.models[key].to(self.device)
-        #     if "discr" in key:
-        #         self.parameters_to_train_D += list(
-        #             self.models[key].parameters())
-        #     elif "transform" in key:
-        #         self.transform_parameters_to_train += list(self.models[key].parameters())
-        #     else:
-        #         self.base_parameters_to_train += list(self.models[key].parameters())
+        self.discriminator = crossView.Discriminator()
+        self.discriminator.to(self.device)
+        self.parameters_to_train_D += list(self.discriminator.parameters())
+
         self.parameters_to_train = [
             {"params": self.transform_parameters_to_train, "lr": self.opt.lr_transform},
             {"params": self.base_parameters_to_train, "lr": self.opt.lr},
@@ -146,16 +104,34 @@ class Trainer:
                 p.register_hook(lambda grad: torch.clamp(grad, -self.opt.grad_clip_value, self.opt.grad_clip_value))
             for p in self.base_parameters_to_train:
                 p.register_hook(lambda grad: torch.clamp(grad, -self.opt.grad_clip_value, self.opt.grad_clip_value))
+            for p in self.parameters_to_train_D:
+                p.register_hook(lambda grad: torch.clamp(grad, -self.opt.grad_clip_value, self.opt.grad_clip_value))
+
 
         # Optimization
         self.model_optimizer = optim.Adam(
             self.parameters_to_train)
-        # self.scheduler = ExponentialLR(self.model_optimizer, gamma=0.98)
-        # self.scheduler = StepLR(self.model_optimizer, step_size=step_size, gamma=0.65)
         self.scheduler = MultiStepLR(self.model_optimizer, milestones=self.opt.lr_steps, gamma=0.1)
-        # self.scheduler = CosineAnnealingLR(self.model_optimizer, T_max=15)  # iou 35.55
+
+        self.model_optimizer_D = optim.Adam(
+            self.parameters_to_train_D, self.opt.lr)
+        self.model_lr_scheduler_D = optim.lr_scheduler.StepLR(
+            self.model_optimizer_D, self.opt.scheduler_step_size, 0.3)
 
         self.patch = (1, self.opt.occ_map_size // 2**4, self.opt.occ_map_size // 2**4)
+
+        self.valid = Variable(
+            torch.Tensor(
+                np.ones(
+                    (self.opt.batch_size,
+                     *self.patch))),
+            requires_grad=False).float().cuda()
+        self.fake = Variable(
+            torch.Tensor(
+                np.zeros(
+                    (self.opt.batch_size,
+                     *self.patch))),
+            requires_grad=False).float().cuda()
 
         # Data Loaders
         dataset_dict = {
@@ -213,11 +189,12 @@ class Trainer:
 
         for self.epoch in range(self.start_epoch, self.opt.num_epochs + 1):
             self.adjust_learning_rate(self.model_optimizer, self.epoch, self.opt.lr_steps)
+            if self.epoch >= self.opt.discr_start_epoch:
+                self.model_lr_scheduler_D.step()
             loss = self.run_epoch()
-            output = ("Epoch: %d | lr:%.7f | Loss: %.4f | topview Loss: %.4f | transform_topview Loss: %.4f | "
-                      "transform Loss: %.4f"
-                      % (self.epoch, self.model_optimizer.param_groups[-1]['lr'], loss["loss"], loss["topview_loss"],
-                         loss["transform_topview_loss"], loss["transform_loss"]))
+            output = ("Epoch: %d | lr:%.7f | disc_lr:%.7f | Loss: %.4f | topview Loss: %.4f | disc_Loss: %.4f"
+                      % (self.epoch, self.model_optimizer.param_groups[-1]['lr'], self.model_lr_scheduler_D.get_lr()[0], 
+                      loss["loss"], loss["topview_loss"], loss["loss_discr"]))
             print(output)
             self.log.write(output + '\n')
             self.log.flush()
@@ -244,121 +221,23 @@ class Trainer:
 
         losses = self.criterion(self.opt, self.weight, inputs, outputs)
 
-        # features = self.models["encoder"](inputs["color"])
-
-        # b, c, h, w = features.shape
-        # features = (features.reshape(b, c, -1) + self.pos_emb1D[:, :, :h*w].to(self.device)).reshape(b, c, h, w)
-        
-        
-        # x_feature = features
-        # transform_feature, retransform_features = self.models["CycledViewProjection"](features)
-        # features = self.models["CrossViewTransformer"](features, transform_feature, retransform_features)
-
-        # depth_features = self.models["DepthEncoder"](inputs["depth_gt"])
-        # features = self.models["MergeMultimodal"](features,  depth_features)
-        
-        # chandrakar_features = self.models["ChandrakarEncoder"](inputs["chandrakar_input"])
-        # features = self.models["MergeMultimodal"](features,  chandrakar_features)
-        # x_feature = retransform_features = transform_feature = features #= depth_features
-        # features = self.models["BasicTransformer"](features)
-
-        # chandrakar_features = self.models["ChandrakarEncoder"](inputs["chandrakar_input"])
-        # features = self.models["BasicTransformer2"](chandrakar_features, features, chandrakar_features)
-        # x_feature = retransform_features = transform_feature = features
-
-        # x_feature = retransform_features = transform_feature = features #= depth_features
-        # features = self.models["BasicTransformer"](features, features, features)
-
-        # depth = F.interpolate(input=inputs["depth_gt"], size=(w, h), mode='bilinear')
-        # pc = depth.reshape(b, 1, -1) * self.cam_coords.to(self.device).unsqueeze(dim=0).repeat(b, 1, 1)
-        # pc = pc.transpose(-1, -2)
-        # pc[..., 1] += self.opt.cam_height
-
-        # map_size = self.opt.occ_map_size // 4
-        # cell_size = 3.2/map_size
-
-        # x_indices = (pc[..., 0]//cell_size).reshape(-1).long() + map_size//2
-        # y_indices = pc[..., 1].reshape(-1)
-        # z_indices = (pc[..., 2]//cell_size).reshape(-1).long() + map_size
-        # batch_indices = torch.cat([torch.full([pc.shape[1]], ix, device=x_indices.device, dtype=torch.long) for ix in range(pc.shape[0])])
-
-        # valid_indices = (x_indices >= 0) & (x_indices < map_size) & (z_indices >= 0) & (z_indices < map_size) & (y_indices < self.opt.obstacle_height)
-        # flat_idx = ((batch_indices * map_size * map_size) + (z_indices * map_size) + x_indices)[valid_indices]
-
-        # rank = torch.argsort(flat_idx)
-        # flat_idx = flat_idx[rank]
-
-        # kept = torch.ones_like(flat_idx, device=flat_idx.device, dtype=torch.long)
-        # kept[:-1] = flat_idx[1:] != flat_idx[:-1]
-
-        # b, c, h, w = features.shape
-        # features = features.reshape((b, c, -1)).transpose(-2, -1).reshape((-1, c))
-        # features = features[valid_indices][rank]
-
-        # feature_sum = torch.cumsum(features, dim=0)
-        # x_sum = feature_sum[kept] - features[kept]
-        # x_sum = torch.cat([x_sum[:1], x_sum[1:] - x_sum[:-1]], dim=0)
-
-        # warped_feature_grid = torch.zeros((b * map_size * map_size, c), dtype=torch.float32, device=x_sum.device, requires_grad=True).clone()
-        # warped_feature_grid[flat_idx] = x_sum
-        # warped_feature_grid = warped_feature_grid.reshape((b, map_size, map_size, c)).permute((0, 3, 1, 2)) # B x C x Bh x Bw
-
-        # patch_size = 8
-        # chandrakar_patches = rearrange(inputs["chandrakar_input"], "b c (x p_x) (y p_y) -> b (p_x p_y c) x y", p_x=patch_size, p_y=patch_size)
-
-        # chandrakar_features = self.models["ChandrakarEncoder"](inputs["chandrakar_input"])
-        # # chandrakar_features = self.models["ChandrakarAttn"](chandrakar_features, chandrakar_features, chandrakar_features)
-        # features = self.models["MergeMultimodal"](warped_feature_grid,  chandrakar_features)
-        
-
-        # if self.multimodal_input:
-        #     chandrakar_features = self.models["ChandrakarEncoder"](inputs["chandrakar_input"])
-        #     # features = self.models["MergeMultimodal"](features,  chandrakar_features)
-
-        #     # Cross-view Transformation Module
-        #     x_feature = features
-        #     transform_feature, retransform_features = self.models["CycledViewProjection"](features)
-        #     features = self.models["CrossViewTransformer"](features, transform_feature, retransform_features)
-
-        # if self.multimodal_input:
-        #     chandrakar_features = self.models["ChandrakarEncoder"](inputs["chandrakar_input"])
-
-        #     # Cross-view Transformation Module
-        #     x_feature = features
-        #     transform_feature, retransform_features = self.models["CycledViewProjectionMultimodal"](features, chandrakar_features)
-        #     features = self.models["CrossViewTransformer"](features, transform_feature, retransform_features)
-
-        # chandrakar_features = self.models["ChandrakarEncoder"](inputs["chandrakar_input"])
-        # features = self.models["MergeMultimodal"](features,  chandrakar_features)
-
-        # x_feature = retransform_features = transform_feature = features #= depth_features
-        # chandrakar_features = self.models["BasicTransformer2"](features, features, chandrakar_features)  # Based on RGB similarity, warp chandrakar to entire image.
-
-        # features = torch.cat([features, chandrakar_features], dim=1)
-        
-        # outputs["topview"] = self.models["decoder"](features)
-        # outputs["transform_topview"] = self.models["transform_decoder"](transform_feature)
-        # if validation:
-        #     return outputs
-        # losses = self.criterion(self.opt, self.weight, inputs, outputs, x_feature, retransform_features)
-
         return outputs, losses
 
     def run_epoch(self):
         self.model_optimizer.step()
+        self.model_optimizer_D.step()
         loss = {
             "loss": 0.0,
             "topview_loss": 0.0,
             "transform_loss": 0.0,
             "transform_topview_loss": 0.0,
             "boundary": 0.0,
+            "loss_G": 0.0,
             "loss_discr": 0.0
         }
-        accumulation_steps = 100
         valid_batches = 0
         for batch_idx, inputs in tqdm.tqdm(enumerate(self.train_loader)):
             outputs, losses = self.process_batch(inputs)
-            self.model_optimizer.zero_grad()
 
             if torch.isnan(losses["loss"]) or torch.isinf(losses["loss"]):
                 self.log.write("NaN loss at Epoch: %d Batch_idx: %d Filenames: %s \n" % (self.epoch, batch_idx, ",".join(inputs["filename"])))
@@ -367,22 +246,34 @@ class Trainer:
 
             valid_batches += 1
 
-            losses["loss"] = losses["loss"] #/ accumulation_steps
-            losses["loss"].backward()
-            self.model_optimizer.step()
+            target_bev = F.one_hot(inputs["discr"], 3).float().permute(0, 3, 1, 2).to(self.device)
+
+            fake_pred = self.discriminator(outputs["topview"])
+            real_pred = self.discriminator(target_bev)
+            losses["loss_G"] = self.criterion_d(fake_pred, self.valid) #+ self.criterion_d(real_pred.clone(), self.valid)
+            losses["loss_discr"] = (self.criterion_d(fake_pred.detach(), self.fake) + self.criterion_d(real_pred, self.valid))/2
+
+
+            if self.epoch >= self.opt.discr_start_epoch: 
+                losses["loss"] = 0.1 * losses["loss_G"] + losses["loss"]
+
+                self.model_optimizer.zero_grad()
+                losses["loss"].backward(retain_graph=True)
+                self.model_optimizer.step()
+
+                self.model_optimizer_D.zero_grad()
+                losses["loss_discr"].backward()
+                self.model_optimizer_D.step()
+
+
+            else:
+                self.model_optimizer.zero_grad()
+                losses["loss"].backward()
+                self.model_optimizer.step()
 
             for loss_name in losses:
                 loss[loss_name] += losses[loss_name].item()
-
-            # if batch_idx % accumulation_steps == 0:
-            #     for log_idx in (0, 4):
-            #         # COLOR data
-            #         color = invnormalize_imagenet(inputs["color"][log_idx].detach().cpu())
-            #         color = cv2.resize(color.numpy().transpose((1,2,0)), dsize=(128, 128)).transpose((2, 0, 1))
-            #         self.writer.add_image(f"train_color_gt/{batch_idx}/{log_idx}", color, self.epoch)
-
-        
-        # self.scheduler.step()
+                
         for loss_name in loss:
             loss[loss_name] /= valid_batches
 
@@ -517,22 +408,19 @@ class Trainer:
         if not os.path.exists(save_path):
             os.makedirs(save_path)
 
-        # for model_name, model in self.models.items():
-        #     model_path = os.path.join(save_path, "{}.pth".format(model_name))
-        #     state_dict = model.state_dict()
-        #     state_dict['epoch'] = self.epoch
-        #     if model_name == "encoder":
-        #         state_dict["height"] = self.opt.height
-        #         state_dict["width"] = self.opt.width
-
-        #     torch.save(state_dict, model_path)
-
         pipeline_state_dict = self.pipeline.state_dict()
         pipeline_state_dict["class"] = type(self.pipeline).__name__
         torch.save(pipeline_state_dict, os.path.join(save_path, "pipeline.pth"))
 
+        disc_state_dict = self.discriminator.state_dict()
+        disc_state_dict["class"] = type(self.discriminator).__name__
+        torch.save(disc_state_dict, os.path.join(save_path, "discriminator.pth"))
+
         optim_path = os.path.join(save_path, "{}.pth".format("adam"))
         torch.save(self.model_optimizer.state_dict(), optim_path)
+
+        disc_optim_path = os.path.join(save_path, "disc_{}.pth".format("adam"))
+        torch.save(self.model_optimizer_D.state_dict(), disc_optim_path)
 
     def load_model(self):
         """Load model(s) from disk
@@ -550,35 +438,34 @@ class Trainer:
             "loading model from folder {}".format(
                 self.opt.load_weights_folder))
 
-        # for key in self.models.keys():
-        #     if "discriminator" not in key:
-        #         print("Loading {} weights...".format(key))
-        #         path = os.path.join(
-        #             self.opt.load_weights_folder,
-        #             "{}.pth".format(key))
-        #         model_dict = self.models[key].state_dict()
-        #         pretrained_dict = torch.load(path)
-        #         if 'epoch' in pretrained_dict:
-        #             self.start_epoch = pretrained_dict['epoch']
-        #         pretrained_dict = {k: v for k, v in pretrained_dict.items() if k in model_dict}
-        #         model_dict.update(pretrained_dict)
-        #         self.models[key].load_state_dict(model_dict)
-
         # Pipeline param load
         path = os.path.join(self.opt.load_weights_folder, "pipeline.pth")
         if os.path.exists(path):
             model_dict = self.pipeline.state_dict()
             pretrained_dict = torch.load(path)
-            print("LOADING PIPELINE WEIGHTS FOR CLASS: ", pretrained_dict["class"])
+            print("LOADING PIPELINE WEIGHTS FOR CLASS: ", pretrained_dict.pop('class'))
             if 'epoch' in pretrained_dict:
                 self.start_epoch = pretrained_dict['epoch']
             # pretrained_dict = {k: v for k, v in pretrained_dict.items() if k in model_dict}
             model_dict.update(pretrained_dict)
             mk, uk = self.pipeline.load_state_dict(model_dict)
             print(mk, uk)
+        else:
+            raise Exception("No pipeline weights found")
+
+        path = os.path.join(self.opt.load_weights_folder, "discriminator.pth")
+        if os.path.exists(path):
+            model_dict = self.discriminator.state_dict()
+            pretrained_dict = torch.load(path)
+            print("LOADING DISCRIMINATOR WEIGHTS FOR CLASS: ", pretrained_dict.pop('class'))
+            model_dict.update(pretrained_dict)
+            mk, uk = self.discriminator.load_state_dict(model_dict)
+            print(mk, uk)
+        else:
+            raise Exception("No discriminator weights found")
 
         # loading adam state
-        if self.opt.load_weights_folder == "":
+        if self.opt.load_weights_folder != "":
             optimizer_load_path = os.path.join(
                 self.opt.load_weights_folder, "adam.pth")
             if os.path.isfile(optimizer_load_path):
@@ -588,9 +475,22 @@ class Trainer:
             else:
                 print("Cannot find Adam weights so Adam is randomly initialized")
 
+        
+        # loading adam state
+        if self.opt.load_weights_folder != "":
+            optimizer_load_path = os.path.join(
+                self.opt.load_weights_folder, "disc_adam.pth")
+            if os.path.isfile(optimizer_load_path):
+                print("Loading Adam weights")
+                optimizer_dict = torch.load(optimizer_load_path)
+                self.model_optimizer_D.load_state_dict(optimizer_dict)
+            else:
+                print("Cannot find DISC Adam weights so DISC Adam is randomly initialized")
+
     def adjust_learning_rate(self, optimizer, epoch, lr_steps):
-        """Sets the learning rate to the initial LR decayed by 10 every 25 epochs"""
-        decay = 0.1 ** (sum(epoch >= np.array(lr_steps)))
+        """Sets the learning rate to the initial LR decayed by [0.5, 0.1, 0.05, 0.01] every 25 epochs"""
+        adjust_steps = sum(epoch >= np.array(lr_steps)) 
+        decay = (0.1 ** (adjust_steps // 2)) * (0.5 ** (adjust_steps % 2))
         decay = round(decay, 2)
         lr = self.opt.lr * decay
         lr_transform = self.opt.lr_transform * decay

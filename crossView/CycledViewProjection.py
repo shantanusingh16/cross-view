@@ -7,6 +7,8 @@ import torch.nn.functional as F
 
 import numpy as np
 
+from crossView.model import MergeMultimodal
+
 
 class CycledViewProjection(nn.Module):
     def __init__(self, in_dim):
@@ -22,6 +24,23 @@ class CycledViewProjection(nn.Module):
         transform_features = transform_feature.view([B, int(x.size()[1])] + list(x.size()[2:]))
         retransform_features = self.retransform_module(transform_features)
         return transform_feature, retransform_features
+
+class CycledViewProjectionMultimodal(nn.Module):
+    def __init__(self, in_dim, in_channels):
+        super(CycledViewProjectionMultimodal, self).__init__()
+        self.transform_module = TransformModule(dim=in_dim)
+        self.merge_multimodal = MergeMultimodal(nfeats=in_channels, nmodes=2)
+        self.retransform_module = TransformModule(dim=in_dim)
+        # self.bn = nn.BatchNorm2d(512)
+
+    def forward(self, x, y):
+        B, C, H, W = x.view([-1, int(x.size()[1])] + list(x.size()[2:])).size()
+        # x = self.bn(x)
+        transform_feature = self.transform_module(x)
+        transform_features = transform_feature.view([B, int(x.size()[1])] + list(x.size()[2:]))
+        transform_features = self.merge_multimodal(x, y)
+        retransform_features = self.retransform_module(transform_features)
+        return transform_features, retransform_features
 
 
 class TransformModule(nn.Module):
